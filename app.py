@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 
+# KeyError 방지: styler.render.max_elements 옵션 크게 설정
+pd.set_option("styler.render.max_elements", 999_999_999)
+
 st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
 st.title("📈 Dividend Growth Stock")
 
@@ -28,7 +31,6 @@ if os.path.exists(file_path):
         '10년후BPS': '{:,.0f}',
         rate_col: '{:.2f}'
     }
-    # 실제 컬럼명에 맞게 format_dict 조정
     format_dict = {col: fmt for col, fmt in format_dict.items() if col in df.columns}
 
     # 복리수익률 15% 이상 셀만 하이라이트

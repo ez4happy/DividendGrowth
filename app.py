@@ -6,7 +6,7 @@ import os
 st.set_page_config(page_title="주식 데이터 대시보드", layout="wide")
 st.title("📈 주식 데이터 대시보드")
 
-file_path = "통합문서1.xlsx"
+file_path = "1.xlsx"
 
 if os.path.exists(file_path):
     df = pd.read_excel(file_path)

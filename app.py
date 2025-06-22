@@ -32,9 +32,8 @@ if os.path.exists(file_path):
 
     # 정렬 및 순위
     df_sorted = df.sort_values(by='복리수익률(%)', ascending=False).reset_index(drop=True)
-    df_sorted['순위'] = df_sorted.index + 1
 
-    # 표에 표시할 컬럼만 선택 (첨부 이미지 기준)
+    # 표에 표시할 컬럼만 선택 (이미지 순서)
     main_cols = ['종목명', '현재가', '등락률'] + roe_cols + ['BPS', '배당수익률', 'Stochastic', '추정ROE', '10년후BPS', '복리수익률(%)']
     final_cols = [col for col in main_cols if col in df_sorted.columns]
     df_show = df_sorted[final_cols]
@@ -59,7 +58,14 @@ if os.path.exists(file_path):
         '복리수익률(%)': '{:.2f}%'
     }
 
-    styled_df = df_show.style.apply(highlight_high_return, axis=1).format(format_dict)
+    # 스타일 적용: 가운데 정렬, 하이라이트, 포맷
+    styled_df = (
+        df_show.style
+        .apply(highlight_high_return, axis=1)
+        .format(format_dict)
+        .set_properties(**{'text-align': 'center'})  # 셀 가운데 정렬
+        .set_table_styles([{'selector': 'th', 'props': [('text-align', 'center')]}])  # 헤더 가운데 정렬
+    )
 
     st.dataframe(styled_df, use_container_width=True, height=500)
 

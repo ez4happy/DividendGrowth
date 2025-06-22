@@ -25,9 +25,9 @@ if os.path.exists(file_path):
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(',', '').str.replace('%','').astype(float)
 
-    # 평균ROE, 10년후BPS, 복리수익률 계산
-    df['평균ROE'] = df[roe_cols[0]]*0.4 + df[roe_cols[1]]*0.35 + df[roe_cols[2]]*0.25
-    df['10년후BPS'] = (df['BPS'] * (1 + df['평균ROE']/100) ** 10).round(0)
+    # 추정ROE, 10년후BPS, 복리수익률 계산
+    df['추정ROE'] = df[roe_cols[0]]*0.4 + df[roe_cols[1]]*0.35 + df[roe_cols[2]]*0.25
+    df['10년후BPS'] = (df['BPS'] * (1 + df['추정ROE']/100) ** 10).round(0)
     df['복리수익률(%)'] = (((df['10년후BPS'] / df['현재가']) ** (1/10)) - 1) * 100
     df['복리수익률(%)'] = df['복리수익률(%)'].round(2)
 
@@ -36,7 +36,7 @@ if os.path.exists(file_path):
     df_sorted['순위'] = df_sorted.index + 1
 
     # 컬럼 순서 보기 좋게
-    main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + ['평균ROE', 'BPS', '배당수익률', 'Stochastic', '10년후BPS', '복리수익률(%)']
+    main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + ['추정ROE', 'BPS', '배당수익률', 'Stochastic', '10년후BPS', '복리수익률(%)']
     final_cols = [col for col in main_cols if col in df_sorted.columns]
     df_show = df_sorted[final_cols]
 

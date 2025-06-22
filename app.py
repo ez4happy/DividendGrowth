@@ -3,8 +3,8 @@ import pandas as pd
 import plotly.express as px
 import os
 
-st.set_page_config(page_title="주식 데이터 대시보드", layout="wide")
-st.title("📈 주식 데이터 대시보드")
+st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
+st.title("📈 Dividend Growth Stock")
 
 file_path = "1.xlsx"
 

@@ -34,22 +34,34 @@ if os.path.exists(file_path):
     df_sorted = df.sort_values(by='복리수익률(%)', ascending=False).reset_index(drop=True)
     df_sorted['순위'] = df_sorted.index + 1
 
-    # 표에 표시할 컬럼만 선택
-    main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + ['추정ROE', 'BPS', '배당수익률', 'Stochastic', '10년후BPS', '복리수익률(%)']
+    # 표에 표시할 컬럼만 선택 (첨부 이미지 기준)
+    main_cols = ['종목명', '현재가', '등락률'] + roe_cols + ['BPS', '배당수익률', 'Stochastic', '추정ROE', '10년후BPS', '복리수익률(%)']
     final_cols = [col for col in main_cols if col in df_sorted.columns]
     df_show = df_sorted[final_cols]
 
-    # 복리수익률 15% 이상 종목명 녹색 표시 함수
+    # 하이라이트 함수
     def highlight_high_return(row):
         color = 'background-color: lightgreen' if row['복리수익률(%)'] >= 15 else ''
         return [color if col == '종목명' else '' for col in row.index]
 
-    # 스타일 적용
-    st.dataframe(
-        df_show.style.apply(highlight_high_return, axis=1),
-        use_container_width=True,
-        height=500
-    )
+    # 포맷 지정
+    format_dict = {
+        '현재가': '{:,.0f}',
+        '등락률': '{:+.2f}%',
+        roe_cols[0]: '{:.2f}%',
+        roe_cols[1]: '{:.2f}%',
+        roe_cols[2]: '{:.2f}%',
+        'BPS': '{:,.0f}',
+        '배당수익률': '{:.2f}%',
+        'Stochastic': '{:.0f}',
+        '추정ROE': '{:.2f}%',
+        '10년후BPS': '{:,.0f}',
+        '복리수익률(%)': '{:.2f}%'
+    }
+
+    styled_df = df_show.style.apply(highlight_high_return, axis=1).format(format_dict)
+
+    st.dataframe(styled_df, use_container_width=True, height=500)
 
 else:
     st.error(f"현재 작업 폴더에 '{file_path}' 파일이 없습니다.\n\n해당 파일을 같은 폴더에 넣어주세요.")

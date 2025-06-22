@@ -70,7 +70,8 @@ if os.path.exists(file_path):
         .set_table_styles([{'selector': 'th', 'props': [('text-align', 'center')]}])
     )
 
-    st.dataframe(styled_df, use_container_width=True, height=500)
+    # 인덱스 숨김 옵션 추가!
+    st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
 else:
     st.error(f"현재 작업 폴더에 '{file_path}' 파일이 없습니다.\n\n해당 파일을 같은 폴더에 넣어주세요.")

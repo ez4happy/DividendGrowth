@@ -1,7 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import os
 
 st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
@@ -36,70 +34,22 @@ if os.path.exists(file_path):
     df_sorted = df.sort_values(by='복리수익률(%)', ascending=False).reset_index(drop=True)
     df_sorted['순위'] = df_sorted.index + 1
 
-    # 컬럼 순서
+    # 표에 표시할 컬럼만 선택
     main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + ['추정ROE', 'BPS', '배당수익률', 'Stochastic', '10년후BPS', '복리수익률(%)']
     final_cols = [col for col in main_cols if col in df_sorted.columns]
     df_show = df_sorted[final_cols]
 
-    # 대시보드 요약 정보
-    col1, col2, col3 = st.columns(3)
-    col1.metric("전체 종목 평균 추정ROE(%)", round(df_show['추정ROE'].mean(), 2))
-    col2.metric("전체 종목 평균 복리수익률(%)", round(df_show['복리수익률(%)'].mean(), 2))
-    col3.metric("종목 수", len(df_show))
+    # 복리수익률 15% 이상 종목명 녹색 표시 함수
+    def highlight_high_return(row):
+        color = 'background-color: lightgreen' if row['복리수익률(%)'] >= 15 else ''
+        return [color if col == '종목명' else '' for col in row.index]
 
-    st.markdown("### 📋 종목별 데이터")
-    st.dataframe(df_show, use_container_width=True, height=500)
-
-    st.markdown("### 📊 복리수익률(%) 순위별 바 차트")
-    fig1 = px.bar(
-        df_show,
-        x='순위',
-        y='복리수익률(%)',
-        hover_data=final_cols,
-        labels={'순위': '순위', '복리수익률(%)': '복리수익률 (%)'},
-        title='복리수익률 순위별 바 차트'
+    # 스타일 적용
+    st.dataframe(
+        df_show.style.apply(highlight_high_return, axis=1),
+        use_container_width=True,
+        height=500
     )
-    fig1.update_layout(xaxis_title='순위', yaxis_title='복리수익률 (%)', plot_bgcolor='#fcfcfc', font=dict(size=15))
-    st.plotly_chart(fig1, use_container_width=True)
-
-    st.markdown("### 📊 추정ROE(%) 순위별 바 차트")
-    fig2 = px.bar(
-        df_show,
-        x='순위',
-        y='추정ROE',
-        hover_data=final_cols,
-        labels={'순위': '순위', '추정ROE': '추정ROE (%)'},
-        title='추정ROE 순위별 바 차트'
-    )
-    fig2.update_layout(xaxis_title='순위', yaxis_title='추정ROE (%)', plot_bgcolor='#fcfcfc', font=dict(size=15))
-    st.plotly_chart(fig2, use_container_width=True)
-
-    st.markdown("### 📈 복리수익률(%) & 추정ROE(%) 혼합 그래프")
-    fig3 = go.Figure()
-    fig3.add_trace(go.Bar(
-        x=df_show['순위'],
-        y=df_show['복리수익률(%)'],
-        name='복리수익률(%)',
-        marker_color='skyblue'
-    ))
-    fig3.add_trace(go.Scatter(
-        x=df_show['순위'],
-        y=df_show['추정ROE'],
-        name='추정ROE(%)',
-        yaxis='y2',
-        mode='lines+markers',
-        marker_color='orange'
-    ))
-    fig3.update_layout(
-        title='복리수익률 & 추정ROE 순위별 혼합 차트',
-        xaxis_title='순위',
-        yaxis=dict(title='복리수익률(%)'),
-        yaxis2=dict(title='추정ROE(%)', overlaying='y', side='right'),
-        plot_bgcolor='#fcfcfc',
-        font=dict(size=15),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
-    )
-    st.plotly_chart(fig3, use_container_width=True)
 
 else:
     st.error(f"현재 작업 폴더에 '{file_path}' 파일이 없습니다.\n\n해당 파일을 같은 폴더에 넣어주세요.")

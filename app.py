@@ -11,7 +11,7 @@ if os.path.exists(file_path):
     df = pd.read_excel(file_path)
     df.columns = df.columns.str.strip()
 
-    # Stochastic 컬럼명 자동 탐색 (부분일치)
+    # Stochastic 컬럼명 자동 탐색 ("Stochastic Fast %K" 등)
     stochastic_col = None
     for col in df.columns:
         if 'stochastic' in col.lower():
@@ -34,7 +34,7 @@ if os.path.exists(file_path):
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(',', '').str.replace('%','').astype(float)
 
-    # 추정ROE, 10년후BPS, 복리수익률 계산 (이미 있으면 생략 가능)
+    # 추정ROE, 10년후BPS, 복리수익률 계산 (이미 있으면 생략)
     if '추정ROE' not in df.columns:
         df['추정ROE'] = df[roe_cols[0]]*0.4 + df[roe_cols[1]]*0.35 + df[roe_cols[2]]*0.25
     if '10년후BPS' not in df.columns and 'BPS' in df.columns and '추정ROE' in df.columns:
@@ -43,8 +43,8 @@ if os.path.exists(file_path):
         df['복리수익률'] = (((df['10년후BPS'] / df['현재가']) ** (1/10)) - 1) * 100
         df['복리수익률'] = df['복리수익률'].round(2)
 
-    # 매력도 계산 (복리수익률 15% 미만 컷오프, Stochastic 0~100 정규화, 가중합)
-    alpha = 0.7  # 성장성 70%, 저평가 30%
+    # 매력도 계산 (복리수익률 15% 미만 컷오프, Stochastic 0~100 정규화, 가중합 8:2)
+    alpha = 0.8  # 성장성 80%, 저평가 20%
     max_return = df['복리수익률'].max()
     min_return = 15.0  # 고정 컷오프
 

@@ -30,18 +30,32 @@ if os.path.exists(file_path):
     df['복리수익률(%)'] = (((df['10년후BPS'] / df['현재가']) ** (1/10)) - 1) * 100
     df['복리수익률(%)'] = df['복리수익률(%)'].round(2)
 
-    # 복리수익률 기준 정렬 및 순위(1부터)
-    df_sorted = df.sort_values(by='복리수익률(%)', ascending=False).reset_index(drop=True)
+    # 매력도 계산 (복리수익률 15% 미만 컷오프, Stochastic 0~100 정규화, 가중합)
+    alpha = 0.7  # 성장성 70%, 저평가 30% 추천
+    max_return = df['복리수익률(%)'].max()
+    min_return = 15.0  # 고정 컷오프
+
+    # 복리수익률 점수 (15% 미만은 0점)
+    df['복리수익률점수'] = ((df['복리수익률(%)'] - min_return) / (max_return - min_return)).clip(lower=0) * 100
+
+    # 저평가 점수: (100 - Stochastic)로 0~100점 (Stochastic 값 0~100 기준)
+    df['저평가점수'] = (100 - df['Stochastic']).clip(lower=0, upper=100)
+
+    # 최종 매력도
+    df['매력도'] = (alpha * df['복리수익률점수'] + (1 - alpha) * df['저평가점수']).round(2)
+
+    # 매력도 순 정렬 및 순위(1부터)
+    df_sorted = df.sort_values(by='매력도', ascending=False).reset_index(drop=True)
     df_sorted['순위'] = df_sorted.index + 1
 
     # 표에 표시할 컬럼 순서 (순위가 맨 앞)
     main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + [
-        'BPS', '배당수익률', 'Stochastic', '추정ROE', '10년후BPS', '복리수익률(%)'
+        'BPS', '배당수익률', 'Stochastic', '추정ROE', '10년후BPS', '복리수익률(%)', '매력도'
     ]
     final_cols = [col for col in main_cols if col in df_sorted.columns]
     df_show = df_sorted[final_cols]
 
-    # 하이라이트 함수
+    # 하이라이트 함수 (복리수익률 15% 이상 종목명 연두색)
     def highlight_high_return(row):
         color = 'background-color: lightgreen' if row['복리수익률(%)'] >= 15 else ''
         return [color if col == '종목명' else '' for col in row.index]
@@ -58,7 +72,8 @@ if os.path.exists(file_path):
         'Stochastic': '{:.0f}',
         '추정ROE': '{:.2f}%',
         '10년후BPS': '{:,.0f}',
-        '복리수익률(%)': '{:.2f}%'
+        '복리수익률(%)': '{:.2f}%',
+        '매력도': '{:.2f}'
     }
 
     # 스타일 적용: 가운데 정렬, 하이라이트, 포맷

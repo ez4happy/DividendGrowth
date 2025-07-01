@@ -31,7 +31,7 @@ if os.path.exists(file_path):
         st.stop()
     roe_cols = roe_cols[:3]
 
-    # 숫자형 컬럼 처리
+    # 숫자형 컬럼 처리 (등락률은 이미 퍼센트 문자열이므로 제외)
     num_cols = ['현재가', 'BPS', '배당수익률', stochastic_col, '10년후BPS', '복리수익률'] + roe_cols + ['추정ROE']
     for col in num_cols:
         if col in df.columns:
@@ -70,7 +70,7 @@ if os.path.exists(file_path):
     # 컬럼명 변경: 스톡캐스틱 %K 컬럼명을 'RN'으로 변경
     df_sorted = df_sorted.rename(columns={stochastic_col: 'RN'})
 
-    # 표에 표시할 컬럼 순서 (스톡캐스틱 퍼센트 컬럼 제외)
+    # 표에 표시할 컬럼 순서 (등락률 포함, 스톡캐스틱 퍼센트 제외)
     main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + [
         'BPS', '배당수익률', 'RN', '추정ROE', '10년후BPS', '복리수익률', '매력도'
     ]
@@ -82,10 +82,9 @@ if os.path.exists(file_path):
         color = 'background-color: lightgreen' if row['복리수익률'] >= 15 else ''
         return [color if col == '종목명' else '' for col in row.index]
 
-    # 포맷 지정
+    # 포맷 지정 (등락률은 이미 문자열이므로 제외)
     format_dict = {
         '현재가': '{:,.0f}',
-        '등락률': '{:+.2f}%',
         roe_cols[0]: '{:.2f}',
         roe_cols[1]: '{:.2f}',
         roe_cols[2]: '{:.2f}',

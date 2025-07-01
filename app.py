@@ -46,7 +46,7 @@ if os.path.exists(file_path):
         df['복리수익률'] = (((df['10년후BPS'] / df['현재가']) ** (1/10)) - 1) * 100
         df['복리수익률'] = df['복리수익률'].round(2)
 
-    # 가중치 슬라이더 (Streamlit)
+    # 가중치 슬라이더
     alpha = st.slider(
         '복리수익률(성장성) : 저평가(분위수) 가중치 (%)',
         min_value=0, max_value=100, value=80, step=5, format="%d%%"
@@ -57,19 +57,22 @@ if os.path.exists(file_path):
     min_return = 15.0
     df['복리수익률점수'] = ((df['복리수익률'] - min_return) / (max_return - min_return)).clip(lower=0) * 100
 
-    # 저평가 점수: 분위수(Percentile, 낮을수록 점수 높음)
+    # 저평가 점수: 분위수(Percentile)
     df['Stochastic_percentile'] = df[stochastic_col].apply(lambda x: 100 - percentileofscore(df[stochastic_col], x, kind='mean'))
 
-    # 매력도 계산 (실시간 가중치)
+    # 매력도 계산
     df['매력도'] = (alpha * df['복리수익률점수'] + (1 - alpha) * df['Stochastic_percentile']).round(2)
 
-    # 매력도 순 정렬 및 순위(1부터)
+    # 매력도 순 정렬 및 순위
     df_sorted = df.sort_values(by='매력도', ascending=False).reset_index(drop=True)
     df_sorted['순위'] = df_sorted.index + 1
 
-    # 표에 표시할 컬럼 순서 (순위가 맨 앞)
+    # 컬럼명 변경: 스톡캐스틱 %K 컬럼명을 'RN'으로 변경
+    df_sorted = df_sorted.rename(columns={stochastic_col: 'RN'})
+
+    # 표에 표시할 컬럼 순서 (스톡캐스틱 퍼센트 컬럼 제외)
     main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + [
-        'BPS', '배당수익률', stochastic_col, 'Stochastic_percentile', '추정ROE', '10년후BPS', '복리수익률', '매력도'
+        'BPS', '배당수익률', 'RN', '추정ROE', '10년후BPS', '복리수익률', '매력도'
     ]
     final_cols = [col for col in main_cols if col in df_sorted.columns]
     df_show = df_sorted[final_cols]
@@ -88,15 +91,14 @@ if os.path.exists(file_path):
         roe_cols[2]: '{:.2f}',
         'BPS': '{:,.0f}',
         '배당수익률': '{:.2f}',
-        stochastic_col: '{:.0f}',
-        'Stochastic_percentile': '{:.1f}',
+        'RN': '{:.0f}',
         '추정ROE': '{:.2f}',
         '10년후BPS': '{:,.0f}',
         '복리수익률': '{:.2f}',
         '매력도': '{:.2f}'
     }
 
-    # 스타일 적용: 가운데 정렬, 하이라이트, 포맷
+    # 스타일 적용
     styled_df = (
         df_show.style
         .apply(highlight_high_return, axis=1)
@@ -107,15 +109,15 @@ if os.path.exists(file_path):
 
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # 복리수익률 vs Stochastic 산점도
+    # 복리수익률 vs RN 산점도
     fig_scatter = px.scatter(
         df_sorted,
-        x=stochastic_col,
+        x='RN',
         y='복리수익률',
         color='매력도',
         hover_name='종목명',
-        title='복리수익률 vs Stochastic 산점도',
-        labels={stochastic_col: 'Stochastic', '복리수익률': '복리수익률 (%)'},
+        title='복리수익률 vs RN 산점도',
+        labels={'RN': 'RN (Stochastic %K)', '복리수익률': '복리수익률 (%)'},
         color_continuous_scale='Viridis'
     )
     st.plotly_chart(fig_scatter, use_container_width=True)

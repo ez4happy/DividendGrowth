@@ -31,7 +31,20 @@ if os.path.exists(file_path):
         st.stop()
     roe_cols = roe_cols[:3]
 
-    # 숫자형 컬럼 처리 (등락률은 이미 퍼센트 문자열이므로 제외)
+    # 등락률을 항상 퍼센트 문자열로 변환
+    def percent_format(x):
+        try:
+            if isinstance(x, str) and '%' in x:
+                return x
+            else:
+                return f"{float(x)*100:.2f}%"
+        except:
+            return x
+
+    if '등락률' in df.columns:
+        df['등락률'] = df['등락률'].apply(percent_format)
+
+    # 숫자형 컬럼 처리 (등락률은 제외)
     num_cols = ['현재가', 'BPS', '배당수익률', stochastic_col, '10년후BPS', '복리수익률'] + roe_cols + ['추정ROE']
     for col in num_cols:
         if col in df.columns:
@@ -70,7 +83,7 @@ if os.path.exists(file_path):
     # 컬럼명 변경: 스톡캐스틱 %K 컬럼명을 'RN'으로 변경
     df_sorted = df_sorted.rename(columns={stochastic_col: 'RN'})
 
-    # 표에 표시할 컬럼 순서 (등락률 포함, 스톡캐스틱 퍼센트 제외)
+    # 표에 표시할 컬럼 순서 (등락률 포함)
     main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + [
         'BPS', '배당수익률', 'RN', '추정ROE', '10년후BPS', '복리수익률', '매력도'
     ]

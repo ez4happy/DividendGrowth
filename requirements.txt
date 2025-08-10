@@ -1,5 +1,8 @@
 streamlit
 pandas
-openpyxl
-plotly
+numpy
 scipy
+plotly
+openpyxl
+requests
+beautifulsoup4

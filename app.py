@@ -14,20 +14,15 @@ st.title("📈 Dividend Growth Stock")
 file_path = "1.xlsx"
 
 ############################################################
-# FnGuide 팝업에서 최신월 밴드 주가 5개 추출
+# FnGuide 팝업에서 최신월 데이터 추출
 ############################################################
 def get_latest_band_prices_robust(gicode, max_retries=2, delay=0.2):
     """
-    FnGuide PBR 밴드 팝업에서 표 전체를 읽어
-    가장 최신 날짜 행의 수정주가와 밴드 주가 5개를 반환
+    표 전체 검색 → 가장 최신 날짜 행의 수정주가 + 밴드 주가 5개 반환
     """
-    url = (
-        f"https://comp.fnguide.com/SVO2/common/chartListPopup2.asp"
-        f"?oid=pbrBandCht&cid=01_06&gicode={gicode}&filter=D&term=Y&etc=B&etc2=0"
-    )
-
-    latest_dt = None
-    latest_cells = None
+    url = (f"https://comp.fnguide.com/SVO2/common/chartListPopup2.asp"
+           f"?oid=pbrBandCht&cid=01_06&gicode={gicode}&filter=D&term=Y&etc=B&etc2=0")
+    latest_dt, latest_cells = None, None
 
     for _ in range(max_retries):
         try:
@@ -36,15 +31,12 @@ def get_latest_band_prices_robust(gicode, max_retries=2, delay=0.2):
             if resp.status_code != 200:
                 time.sleep(delay)
                 continue
-
             soup = BeautifulSoup(resp.text, 'html.parser')
             rows = soup.select("table tbody tr")
-
             for tr in rows:
                 cells = [td.get_text(strip=True).replace(',', '') for td in tr.find_all('td')]
                 if len(cells) >= 7:
                     dt = cells[0]
-                    # 날짜 판별
                     if len(dt) == 10 and dt.replace('/', '').isdigit():
                         if latest_dt is None or dt > latest_dt:
                             latest_dt, latest_cells = dt, cells
@@ -60,16 +52,13 @@ def get_latest_band_prices_robust(gicode, max_retries=2, delay=0.2):
                         band_prices.append(float(val))
                 if len(band_prices) == 5:
                     return latest_dt, adj_price, band_prices
-
             time.sleep(delay)
-
         except:
             time.sleep(delay)
-
     return None, None, None
 
 ############################################################
-# 현재가 vs 밴드 주가 비교 → position 계산
+# 현재가 vs 밴드 주가로 position 계산
 ############################################################
 def get_position_from_price(price, band_prices):
     if price is None or np.isnan(price) or not band_prices or len(band_prices) != 5:
@@ -88,23 +77,25 @@ if os.path.exists(file_path):
     df = pd.read_excel(file_path)
     df.columns = df.columns.str.strip()
 
-    # Stochastic 컬럼 탐색
+    # Stochastic 컬럼 확인
     stochastic_col = next((col for col in df.columns if 'stochastic' in col.lower()), None)
-    if not stochastic_col:
-        st.error("Stochastic 컬럼을 찾을 수 없습니다."); st.stop()
+    if stochastic_col is None:
+        st.error("Stochastic 컬럼이 없습니다."); st.stop()
 
-    # ROE 컬럼 3개 탐색
-    roe_cols = [c for c in df.columns if 'ROE' in c and '평균' not in c and '최종' not in c][:3]
+    # ROE 컬럼 확인
+    roe_cols = [c for c in df.columns if 'ROE' in c and '평균' not in c and '최종' not in c]
     if len(roe_cols) < 3:
-        st.error(f"ROE 컬럼이 3개 필요합니다. 현재: {roe_cols}"); st.stop()
+        st.error(f"ROE 컬럼이 3개 미만 입니다. 현재: {roe_cols}")
+        st.stop()
+    roe_cols = roe_cols[:3]
 
-    # 등락률 처리
+    # 등락률 형식 변환
     if '등락률' in df.columns:
         df['등락률'] = df['등락률'].apply(
             lambda x: f"{float(x)*100:.2f}%" if not isinstance(x, str) or '%' not in x else x
         )
 
-    # 숫자형 변환
+    # 숫자 변환
     num_cols = ['현재가','BPS','배당수익률', stochastic_col,
                 '10년후BPS','복리수익률'] + roe_cols + ['추정ROE']
     for col in num_cols:
@@ -113,63 +104,86 @@ if os.path.exists(file_path):
 
     # 계산 컬럼
     if '추정ROE' not in df.columns:
-        df['추정ROE'] = df[roe_cols[0]]*0.4 + df[roe_cols[1]]*0.35 + df[roe_cols[2]]*0.25
+        df['추정ROE'] = df[roe_cols[0]] * 0.4 + df[roe_cols[1]] * 0.35 + df[roe_cols[2]] * 0.25
     if '10년후BPS' not in df.columns:
-        df['10년후BPS'] = (df['BPS']*(1+df['추정ROE']/100)**10).round(0)
+        df['10년후BPS'] = (df['BPS'] * (1+df['추정ROE']/100)**10).round(0)
     if '복리수익률' not in df.columns:
-        df['복리수익률'] = (((df['10년후BPS']/df['현재가'])**(1/10))-1)*100
+        df['복리수익률'] = (((df['10년후BPS'] / df['현재가'])**(1/10))-1) * 100
 
-    # ===== POSITION 계산 추가 =====
-    if '종목코드' in df.columns:
-        df['position'] = np.nan
-        for idx, row in df.iterrows():
-            gicode = f"A{str(row['종목코드']).zfill(6)}"
-            latest_date, _, bands = get_latest_band_prices_robust(gicode)
-            pos = get_position_from_price(row['현재가'], bands)
-            df.at[idx, 'position'] = pos
-            print(f"{row['종목명']} → 최신월: {latest_date} bands={bands} 현재가={row['현재가']} position={pos}")
-            time.sleep(0.1)
+    # ============================
+    # 임시 테이블로 POSITION 계산
+    # ============================
+    temp_data = []
+    for idx, row in df.iterrows():
+        gicode = f"A{str(row['종목코드']).zfill(6)}"
+        latest_date, _, bands = get_latest_band_prices_robust(gicode)
+        temp_data.append({
+            '종목코드': row['종목코드'],
+            'latest_date': latest_date,
+            'bands': bands,
+            'position': get_position_from_price(row['현재가'], bands)
+        })
+        time.sleep(0.1)
 
-    # ===== 매력도 계산 =====
+    band_df = pd.DataFrame(temp_data)
+    df = df.merge(band_df[['종목코드','position']], on='종목코드', how='left')
+
+    # 매력도 계산
     alpha = st.slider('복리수익률(성장성) : 저평가(분위수) 가중치 (%)',
-                      0, 100, 80, 5, format="%d%%") / 100
+                      0, 100, 80, 5, format="%d%%")/100
     max_return = df['복리수익률'].max()
     min_return = 15.0
-    df['복리수익률점수'] = ((df['복리수익률']-min_return)/(max_return-min_return)).clip(lower=0)*100
+    df['복리수익률점수'] = ((df['복리수익률']-min_return)/(max_return-min_return)).clip(lower=0) * 100
     df['Stochastic_percentile'] = df[stochastic_col].apply(
-        lambda x: 100 - percentileofscore(df[stochastic_col], x, kind='mean'))
+        lambda x: 100 - percentileofscore(df[stochastic_col], x, kind='mean')
+    )
     df['매력도'] = (alpha*df['복리수익률점수'] +
                    (1-alpha)*df['Stochastic_percentile']).round(2)
 
-    # 정렬 및 출력
+    # 정렬, 표시
     df_sorted = df.sort_values(by='매력도', ascending=False).reset_index(drop=True)
-    df_sorted['순위'] = df_sorted.index + 1
+    df_sorted['순위'] = df_sorted.index+1
     df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
 
     main_cols = ['순위','종목명','현재가','등락률'] + roe_cols + \
                 ['BPS','배당수익률','RN','추정ROE','10년후BPS','복리수익률','position','매력도']
+
     df_show = df_sorted[[c for c in main_cols if c in df_sorted.columns]]
 
     def highlight_high_return(row):
         return ['background-color: lightgreen' if col=='종목명' and row['복리수익률']>=15 else '' for col in row.index]
 
-    format_dict = {'현재가':'{:,.0f}', roe_cols[0]:'{:.2f}', roe_cols[1]:'{:.2f}', roe_cols[2]:'{:.2f}',
-                   'BPS':'{:,.0f}','배당수익률':'{:.2f}','RN':'{:,.0f}','추정ROE':'{:.2f}',
-                   '10년후BPS':'{:,.0f}','복리수익률':'{:.2f}','매력도':'{:.2f}','position':'{:,.0f}'}
+    format_dict = {'현재가':'{:,.0f}',
+                   roe_cols[0]:'{:.2f}',
+                   roe_cols[1]:'{:.2f}',
+                   roe_cols[2]:'{:.2f}',
+                   'BPS':'{:,.0f}',
+                   '배당수익률':'{:.2f}',
+                   'RN':'{:,.0f}',
+                   '추정ROE':'{:.2f}',
+                   '10년후BPS':'{:,.0f}',
+                   '복리수익률':'{:.2f}',
+                   '매력도':'{:.2f}',
+                   'position':'{:,.0f}'}
 
     styled_df = (df_show.style.apply(highlight_high_return, axis=1)
-                             .format(format_dict)
-                             .set_properties(**{'text-align': 'center'})
-                             .set_table_styles([{'selector':'th','props':[('text-align','center')]}]))
+        .format(format_dict)
+        .set_properties(**{'text-align': 'center'})
+        .set_table_styles([{'selector':'th','props':[('text-align','center')]}]))
 
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
     # 차트들
     st.plotly_chart(px.scatter(df_sorted, x='RN', y='복리수익률', color='매력도',
-                               hover_name='종목명', title='복리수익률 vs RN 산점도',
-                               color_continuous_scale='Viridis'), use_container_width=True)
+                               hover_name='종목명',
+                               title='복리수익률 vs RN 산점도',
+                               color_continuous_scale='Viridis'),
+                    use_container_width=True)
     st.plotly_chart(px.bar(df_sorted.head(5), x='종목명', y='매력도',
-                           color='매력도', title='매력도 상위 5개 종목',
-                           color_continuous_scale='Viridis'), use_container_width=True)
+                           color='매력도',
+                           title='매력도 상위 5개 종목',
+                           color_continuous_scale='Viridis'),
+                    use_container_width=True)
+
 else:
     st.error(f"현재 폴더에 '{file_path}' 파일이 없습니다.")

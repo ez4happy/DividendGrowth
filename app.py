@@ -6,48 +6,55 @@ import plotly.express as px
 import os
 import requests
 from bs4 import BeautifulSoup
+import time
 
 st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
 st.title("📈 Dividend Growth Stock")
 
 file_path = "1.xlsx"
 
-def get_pbr_band(gicode):
-    """
-    FnGuide 페이지에서 PBR 밴드 값 5개를 가져오는 함수
-    gicode: 'A005930' 형식의 종목코드
-    """
+def get_pbr_band_and_pbr(gicode):
     url = f"https://comp.fnguide.com/SVO2/ASP/SVD_Main.asp?pGB=1&gicode={gicode}&MenuYn=Y&ReportGB=&NewMenuID=101&stkGb=701"
-    resp = requests.get(url)
-    resp.encoding = 'utf-8'
-    soup = BeautifulSoup(resp.text, 'html.parser')
-
-    # TODO: 실제 FnGuide HTML 구조에서 PBR 밴드 값 가져오기
-    # 아래는 예시값 -> 실제 웹 구조 분석 후 변경 필요
-    band_list = [0.9, 1.1, 1.3, 1.5, 1.7]
-    return band_list
-
-def get_pbr(price, bps):
     try:
-        return price / bps if bps != 0 else np.nan
-    except:
-        return np.nan
+        resp = requests.get(url, timeout=5.0)
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        # 예시 selector: 실제 구조 'PBR Band' 테이블 확인 필요
+        band_list = []
+        # 예시: table 내 PBR 밴드 값을 row(행)에서 추출
+        pbr_band_table = soup.find("table", string=lambda x: x and "PBR" in x)
+        if pbr_band_table:
+            for cell in pbr_band_table.find_all("td"):
+                try:
+                    band = float(cell.get_text(strip=True))
+                    band_list.append(band)
+                except:
+                    continue
+        # (실제로는 위에서 .find 또는 select로 band_list 파싱 필요! 아래는 예시)
+        if len(band_list) < 5:
+            band_list = [0.9, 1.1, 1.3, 1.5, 1.7] # 예시 기본값
+        # 현재 PBR 추출(대개의 경우 "주요 투자지표" 섹션에 별도 표기)
+        current_pbr = None
+        keylabels = ["PBR", "주가순자산비율"]
+        for label in keylabels:
+            tag = soup.find(lambda tag: tag.name == 'th' and label in tag.get_text())
+            if tag:
+                td = tag.find_next('td')
+                try:
+                    current_pbr = float(td.get_text(strip=True))
+                    break
+                except:
+                    continue
+        return band_list, current_pbr
+    except Exception as e:
+        st.warning(f"{gicode} 크롤링 오류: {e}")
+        return [0.9, 1.1, 1.3, 1.5, 1.7], None
 
 def get_position(pbr, bands):
-    if pd.isna(pbr):
-        return np.nan
-    if pbr < bands[0]:
-        return 1
-    elif pbr < bands[1]:
-        return 2
-    elif pbr < bands[2]:
-        return 3
-    elif pbr < bands[3]:
-        return 4
-    elif pbr < bands[4]:
-        return 5
-    else:
-        return 6
+    if pd.isna(pbr): return np.nan
+    for i, band in enumerate(bands):
+        if pbr < band:
+            return i+1
+    return 6
 
 if os.path.exists(file_path):
     df = pd.read_excel(file_path)
@@ -70,7 +77,6 @@ if os.path.exists(file_path):
         st.stop()
     roe_cols = roe_cols[:3]
 
-    # 등락률을 퍼센트 문자열로 변환
     def percent_format(x):
         try:
             if isinstance(x, str) and '%' in x:
@@ -83,13 +89,11 @@ if os.path.exists(file_path):
     if '등락률' in df.columns:
         df['등락률'] = df['등락률'].apply(percent_format)
 
-    # 숫자형 변환
     num_cols = ['현재가', 'BPS', '배당수익률', stochastic_col, '10년후BPS', '복리수익률'] + roe_cols + ['추정ROE']
     for col in num_cols:
         if col in df.columns:
             df[col] = df[col].astype(str).str.replace(',', '').str.replace('%','').astype(float)
 
-    # 계산 컬럼
     if '추정ROE' not in df.columns:
         df['추정ROE'] = df[roe_cols[0]]*0.4 + df[roe_cols[1]]*0.35 + df[roe_cols[2]]*0.25
     if '10년후BPS' not in df.columns and 'BPS' in df.columns and '추정ROE' in df.columns:
@@ -98,17 +102,22 @@ if os.path.exists(file_path):
         df['복리수익률'] = (((df['10년후BPS'] / df['현재가']) ** (1/10)) - 1) * 100
         df['복리수익률'] = df['복리수익률'].round(2)
 
-    # position 컬럼 생성
+    # [핵심]: position 컬럼을 FnGuide에서 PBR밴드 실시간 파싱 후 넣기
     if '종목코드' in df.columns:
+        df['position'] = np.nan
         for idx, row in df.iterrows():
             gicode = row['종목코드']
-            price = row['현재가']
-            bps = row['BPS']
-            bands = get_pbr_band(gicode)
-            pbr = get_pbr(price, bps)
-            df.at[idx, 'position'] = get_position(pbr, bands)
+            if pd.isna(gicode): continue
+            try:
+                band_list, current_pbr = get_pbr_band_and_pbr(gicode)
+                # bps 없는 경우 PBR 산출
+                if current_pbr is None and not pd.isna(row['BPS']) and row['BPS']!=0:
+                    current_pbr = row['현재가']/row['BPS']
+                df.at[idx, 'position'] = get_position(current_pbr, band_list)
+                time.sleep(0.4) # 접근 속도 제한
+            except Exception as e:
+                st.warning(f"{gicode} 파싱실패: {e}")
 
-    # 성장성 vs 저평가 가중치
     alpha = st.slider(
         '복리수익률(성장성) : 저평가(분위수) 가중치 (%)',
         min_value=0, max_value=100, value=80, step=5, format="%d%%"
@@ -134,7 +143,6 @@ if os.path.exists(file_path):
     final_cols = [col for col in main_cols if col in df_sorted.columns]
     df_show = df_sorted[final_cols]
 
-    # 하이라이트: 복리수익률 15% 이상
     def highlight_high_return(row):
         color = 'background-color: lightgreen' if row['복리수익률'] >= 15 else ''
         return [color if col == '종목명' else '' for col in row.index]
@@ -164,7 +172,6 @@ if os.path.exists(file_path):
 
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
-    # 시각화
     fig_scatter = px.scatter(
         df_sorted,
         x='RN',

@@ -1,60 +1,67 @@
 import streamlit as st
 import pandas as pd
 import requests
-import re
-import json
+from bs4 import BeautifulSoup
 import traceback
 
 st.set_page_config(layout="wide")
-st.title("📈 Dividend Growth Stock with POSITION")
+st.title("📈 Dividend Growth Stock with POSITION (HTML 테이블 파싱 버전)")
 
 # -------------------
-# POSITION 계산 함수
+# POSITION 계산 함수 (HTML 테이블 파싱)
 # -------------------
-def get_position(code):
-    """FN가이드 PBR Band 데이터 기반 POSITION 계산"""
+def get_position_from_html_table(code):
     url = f"https://comp.fnguide.com/SVO2/common/chartListPopup2.asp?oid=pbrBandCht&cid=01_06&gicode={code}&filter=D&term=Y&etc=B&etc2=0&titleTxt=PBR%20Band&dateTxt=undefined&unitTxt="
     try:
-        r = requests.get(url, timeout=5)
+        r = requests.get(url, timeout=10)
         r.encoding = 'utf-8'
 
-        # chartData 추출
-        match = re.search(r'var\s+chartData\s*=\s*(\[[^\]]+\])', r.text)
-        if not match:
-            st.warning(f"{code}: chartData 패턴 없음")
+        soup = BeautifulSoup(r.text, 'html.parser')
+        table = soup.find('table')
+        if not table:
+            st.warning(f"{code}: 데이터 테이블을 찾을 수 없습니다.")
             return None
 
-        data_str = match.group(1)
-        data = json.loads(data_str)
-
-        # 수정주가 리스트 추출
-        prices = [item[1] for item in data if isinstance(item, list) and len(item) > 1]
-        if len(prices) < 6:
-            st.warning(f"{code}: price 데이터 부족 ({len(prices)}개)")
+        rows = table.find_all('tr')
+        if len(rows) < 3:
+            st.warning(f"{code}: 테이블 데이터 행이 부족합니다.")
             return None
 
-        current_price = prices[0]
-        next_5 = prices[1:6]
-        next_4 = prices[1:5]
+        # 데이터가 두 번째 행부터 시작하는 경우가 많음 (헤더 1행, 실제 데이터 2행~)
+        # 최신 데이터는 보통 가장 위에 있으므로 2번째 행(인덱스 1) 사용
+        data_row = rows[1]
+        cols = data_row.find_all('td')
+        if len(cols) < 7:
+            st.warning(f"{code}: 데이터 컬럼이 충분하지 않습니다.")
+            return None
 
-        if all(current_price < p for p in next_5):
+        # 수정주가 (2번째 컬럼)
+        price_str = cols[1].get_text().replace(',', '').strip()
+        price = float(price_str)
+
+        # 밴드 5개 (3~7번째 컬럼)
+        bands = []
+        for i in range(2, 7):
+            band_str = cols[i].get_text().replace(',', '').strip()
+            bands.append(float(band_str))
+
+        # POSITION 계산
+        if all(price < b for b in bands):
             return 1
-        elif all(current_price < p for p in next_4):
+        elif all(price < b for b in bands[:-1]):
             return 2
         else:
             return 6
+
     except Exception as e:
-        st.warning(f"{code} 에러: {e}")
+        st.warning(f"{code} 파싱 중 에러 발생: {e}")
         return None
 
+
 # -------------------
-# 기존 매력도 계산 함수
+# 기존 매력도 계산 함수 (예시)
 # -------------------
 def calculate_attractiveness(row):
-    """
-    기존 매력도 계산 로직을 이 함수 안에 넣으시면 됩니다.
-    아래 예시는 간단한 점수 예시입니다.
-    """
     try:
         score = 0
         if pd.notnull(row.get('PER')) and row['PER'] < 10:
@@ -66,6 +73,7 @@ def calculate_attractiveness(row):
         return score
     except:
         return None
+
 
 # -------------------
 # 메인 실행부
@@ -84,9 +92,9 @@ if st.button("데이터 불러오고 계산 시작"):
         df['종목코드'] = df['종목코드'].astype(str).str.zfill(6)
         df['종목코드_A'] = 'A' + df['종목코드']
 
-        # POSITION 계산
-        st.info("POSITION 계산 중입니다. 잠시만 기다려 주세요...")
-        df['POSITION'] = df['종목코드_A'].apply(get_position)
+        # POSITION 계산 (HTML 테이블 파싱)
+        st.info("POSITION 계산 중입니다. 시간이 걸릴 수 있습니다...")
+        df['POSITION'] = df['종목코드_A'].apply(get_position_from_html_table)
 
         # 매력도 계산
         st.info("매력도 계산 중입니다...")

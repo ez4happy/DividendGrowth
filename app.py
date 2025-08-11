@@ -6,6 +6,7 @@ import json
 import traceback
 
 st.set_page_config(layout="wide")
+st.title("📈 Dividend Growth Stock with POSITION")
 
 # -------------------
 # POSITION 계산 함수
@@ -51,8 +52,8 @@ def get_position(code):
 # -------------------
 def calculate_attractiveness(row):
     """
-    기존 사용하던 매력도 계산 수식을 이 안에 넣으시면 됩니다.
-    예시는 PER, PBR, ROE 기반 단순 점수 계산입니다.
+    기존 매력도 계산 로직을 이 함수 안에 넣으시면 됩니다.
+    아래 예시는 간단한 점수 예시입니다.
     """
     try:
         score = 0
@@ -67,31 +68,31 @@ def calculate_attractiveness(row):
         return None
 
 # -------------------
-# 파일 업로드
+# 메인 실행부
 # -------------------
-uploaded_file = st.file_uploader("📂 1.xlsx 업로드", type="xlsx")
+file_path = "1.xlsx"
 
-if uploaded_file is not None:
+if st.button("데이터 불러오고 계산 시작"):
     try:
-        df = pd.read_excel(uploaded_file)
+        df = pd.read_excel(file_path)
+        st.success(f"{file_path} 파일 로드 완료")
 
         # 종목코드 6자리 + A 접두사
         if '종목코드' not in df.columns:
             st.error("엑셀에 '종목코드' 컬럼이 없습니다.")
             st.stop()
-
         df['종목코드'] = df['종목코드'].astype(str).str.zfill(6)
         df['종목코드_A'] = 'A' + df['종목코드']
 
         # POSITION 계산
-        st.info("POSITION 계산 중...")
+        st.info("POSITION 계산 중입니다. 잠시만 기다려 주세요...")
         df['POSITION'] = df['종목코드_A'].apply(get_position)
 
         # 매력도 계산
-        st.info("매력도 계산 중...")
+        st.info("매력도 계산 중입니다...")
         df['매력도'] = df.apply(calculate_attractiveness, axis=1)
 
-        # 매력도 앞에 POSITION 배치
+        # 매력도 앞에 POSITION 컬럼 배치
         if '매력도' in df.columns and 'POSITION' in df.columns:
             cols = df.columns.tolist()
             cols.remove('POSITION')
@@ -100,16 +101,16 @@ if uploaded_file is not None:
             new_order = cols[:insert_idx] + ['POSITION', '매력도'] + cols[insert_idx:]
             df = df[new_order]
 
-        # 결과 표시
+        # 결과 출력
         st.dataframe(df)
 
-        # 다운로드 버튼
+        # 엑셀 다운로드
         @st.cache_data
-        def convert_to_excel(dataframe):
-            return dataframe.to_excel(index=False)
+        def convert_to_excel(df):
+            return df.to_excel(index=False)
 
         st.download_button(
-            label="💾 다운로드 (Excel)",
+            label="💾 엑셀 다운로드",
             data=convert_to_excel(df),
             file_name="1_with_position.xlsx"
         )
@@ -117,3 +118,6 @@ if uploaded_file is not None:
     except Exception as e:
         st.error(f"에러 발생: {e}")
         st.text(traceback.format_exc())
+
+else:
+    st.info(f"현재 작업 폴더에 '{file_path}' 파일이 있어야 실행 가능합니다.")

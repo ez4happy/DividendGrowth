@@ -1,117 +1,153 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service as ChromeService
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-import pandas as pd
 import streamlit as st
-import time
+import pandas as pd
+import numpy as np
+from scipy.stats import percentileofscore
+import plotly.express as px
+import os
 
-def fetch_table_with_selenium(code):
-    url = f"https://comp.fnguide.com/SVO2/common/chartListPopup2.asp?oid=pbrBandCht&cid=01_06&gicode={code}&filter=D&term=Y&etc=B&etc2=0&titleTxt=PBR%20Band&dateTxt=undefined&unitTxt="
-    options = webdriver.ChromeOptions()
-    options.add_argument("--headless")  # 창 안 띄우기
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-
-    driver = webdriver.Chrome(service=ChromeService(ChromeDriverManager().install()), options=options)
-    driver.get(url)
-    time.sleep(3)  # 페이지 로딩 대기
-
-    # 테이블 요소 찾기
-    table = driver.find_element(By.CSS_SELECTOR, "table.um_table")
-
-    rows = table.find_elements(By.TAG_NAME, "tr")
-
-    data = []
-    for row in rows[1:]:  # 헤더 제외
-        cols = row.find_elements(By.TAG_NAME, "td")
-        if len(cols) < 7:
-            continue
-        date = cols[0].text.strip()
-        price = cols[1].text.strip().replace(',', '')
-        bands = [cols[i].text.strip().replace(',', '') for i in range(2,7)]
-        try:
-            price_f = float(price)
-            bands_f = [float(b) for b in bands]
-            data.append({
-                "일자": date,
-                "수정주가": price_f,
-                "밴드1": bands_f[0],
-                "밴드2": bands_f[1],
-                "밴드3": bands_f[2],
-                "밴드4": bands_f[3],
-                "밴드5": bands_f[4],
-            })
-        except:
-            continue
-
-    driver.quit()
-
-    df = pd.DataFrame(data)
-    return df
-
-def calc_position(row):
-    price = row['수정주가']
-    bands = [row[f'밴드{i}'] for i in range(1,6)]
-    if all(price < b for b in bands):
-        return 1
-    elif all(price < b for b in bands[:-1]):
-        return 2
-    else:
-        return 6
-
-
-# Streamlit 앱 예제
-st.title("Dividend Growth Stock with Selenium POSITION")
+st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
+st.title("📈 Dividend Growth Stock")
 
 file_path = "1.xlsx"
 
-if st.button("데이터 불러오고 계산 시작"):
-    import traceback
-    try:
-        df_base = pd.read_excel(file_path)
-        st.success(f"{file_path} 파일 로드 완료")
+if os.path.exists(file_path):
+    df = pd.read_excel(file_path)
+    df.columns = df.columns.str.strip()
 
-        if '종목코드' not in df_base.columns:
-            st.error("'종목코드' 컬럼이 없습니다.")
-            st.stop()
+    # Stochastic 컬럼 이름 찾기
+    stochastic_col = next((col for col in df.columns if 'stochastic' in col.lower()), None)
+    if not stochastic_col:
+        st.error("Stochastic 컬럼을 찾을 수 없습니다.")
+        st.stop()
 
-        df_base['종목코드'] = df_base['종목코드'].astype(str).str.zfill(6)
-        df_base['종목코드_A'] = 'A' + df_base['종목코드']
+    # ROE 컬럼 3개 찾기
+    roe_cols = [c for c in df.columns if 'ROE' in c and '평균' not in c and '최종' not in c]
+    if len(roe_cols) < 3:
+        st.error(f"ROE 컬럼 3개가 필요합니다. 현재: {roe_cols}")
+        st.stop()
+    roe_cols = roe_cols[:3]
 
-        all_data = []
-        for code in df_base['종목코드_A'].unique():
-            st.info(f"{code} 데이터 수집중...")
-            df_monthly = fetch_table_with_selenium(code)
-            if df_monthly is not None and not df_monthly.empty:
-                df_monthly['종목코드'] = code
-                all_data.append(df_monthly)
+    # 등락률 퍼센트 형식 변환
+    if '등락률' in df.columns:
+        df['등락률'] = df['등락률'].apply(
+            lambda x: f"{float(x)*100:.2f}%" 
+            if not isinstance(x, str) or '%' not in x else x
+        )
 
-        if not all_data:
-            st.error("데이터를 수집하지 못했습니다.")
-            st.stop()
+    # 숫자형 변환
+    num_cols = ['현재가', 'BPS', '배당수익률', stochastic_col,
+                '10년후BPS', '복리수익률'] + roe_cols + ['추정ROE']
+    for col in num_cols:
+        if col in df.columns:
+            df[col] = (df[col].astype(str)
+                                  .str.replace(',', '')
+                                  .str.replace('%', '')
+                                  .astype(float))
 
-        df_monthly_all = pd.concat(all_data, ignore_index=True)
-        df_monthly_all['일자'] = pd.to_datetime(df_monthly_all['일자'], format="%Y/%m/%d")
+    # 계산 컬럼 생성
+    if '추정ROE' not in df.columns:
+        df['추정ROE'] = (df[roe_cols[0]]*0.4 +
+                         df[roe_cols[1]]*0.35 +
+                         df[roe_cols[2]]*0.25)
+    if '10년후BPS' not in df.columns:
+        df['10년후BPS'] = (
+            df['BPS'] * (1 + df['추정ROE']/100) ** 10
+        ).round(0)
+    if '복리수익률' not in df.columns:
+        df['복리수익률'] = (
+            (df['10년후BPS'] / df['현재가']) ** (1/10) - 1
+        ) * 100
+        df['복리수익률'] = df['복리수익률'].round(2)
 
-        df_latest = df_monthly_all.sort_values('일자', ascending=False).groupby('종목코드').first().reset_index()
-        df_latest['POSITION'] = df_latest.apply(calc_position, axis=1)
+    # =====================
+    # 매력도 계산
+    # =====================
+    alpha = st.slider(
+        '복리수익률(성장성) : 저평가(분위수) 가중치 (%)',
+        0, 100, 80, 5, format="%d%%"
+    ) / 100
+    max_return = df['복리수익률'].max()
+    min_return = 15.0
+    df['복리수익률점수'] = (
+        (df['복리수익률'] - min_return) /
+        (max_return - min_return)
+    ).clip(lower=0) * 100
 
-        df_final = pd.merge(df_base, df_latest[['종목코드', 'POSITION']], left_on='종목코드_A', right_on='종목코드', how='left')
-        df_final.drop(columns=['종목코드_y'], inplace=True)
-        df_final.rename(columns={'종목코드_x': '종목코드'}, inplace=True)
+    df['Stochastic_percentile'] = df[stochastic_col].apply(
+        lambda x: 100 - percentileofscore(
+            df[stochastic_col], x, kind='mean'
+        )
+    )
+    df['매력도'] = (
+        alpha*df['복리수익률점수'] +
+        (1 - alpha)*df['Stochastic_percentile']
+    ).round(2)
 
-        st.dataframe(df_final)
+    # 정렬
+    df_sorted = df.sort_values(
+        by='매력도', ascending=False
+    ).reset_index(drop=True)
+    df_sorted['순위'] = df_sorted.index + 1
+    df_sorted.rename(
+        columns={stochastic_col: 'RN'}, inplace=True
+    )
 
-        @st.cache_data
-        def to_excel(df):
-            return df.to_excel(index=False)
+    # 표시할 컬럼
+    main_cols = ['순위', '종목명', '현재가', '등락률'] + roe_cols + \
+                ['BPS', '배당수익률', 'RN', '추정ROE',
+                 '10년후BPS', '복리수익률', '매력도']
+    df_show = df_sorted[[c for c in main_cols if c in df_sorted.columns]]
 
-        st.download_button("💾 엑셀 다운로드", to_excel(df_final), file_name="1_with_position.xlsx")
+    # 스타일링
+    def highlight_high_return(row):
+        return [
+            'background-color: lightgreen'
+            if col == '종목명' and row['복리수익률'] >= 15
+            else ''
+            for col in row.index
+        ]
 
-    except Exception as e:
-        st.error(f"에러 발생: {e}")
-        st.text(traceback.format_exc())
+    format_dict = {
+        '현재가': '{:,.0f}', 
+        roe_cols[0]: '{:.2f}', 
+        roe_cols[1]: '{:.2f}', 
+        roe_cols[2]: '{:.2f}',
+        'BPS': '{:,.0f}', 
+        '배당수익률': '{:.2f}', 
+        'RN': '{:,.0f}', 
+        '추정ROE': '{:.2f}',
+        '10년후BPS': '{:,.0f}', 
+        '복리수익률': '{:.2f}', 
+        '매력도': '{:.2f}'
+    }
+
+    styled_df = (
+        df_show.style
+              .apply(highlight_high_return, axis=1)
+              .format(format_dict)
+              .set_properties(**{'text-align': 'center'})
+              .set_table_styles(
+                  [{'selector':'th','props':[('text-align','center')]}]
+              )
+    )
+    st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
+
+    # 차트 1
+    fig_scatter = px.scatter(
+        df_sorted, x='RN', y='복리수익률', color='매력도',
+        hover_name='종목명', title='복리수익률 vs RN 산점도',
+        labels={'RN':'RN(Stochastic %K)', '복리수익률':'복리수익률(%)'},
+        color_continuous_scale='Viridis'
+    )
+    st.plotly_chart(fig_scatter, use_container_width=True)
+
+    # 차트 2
+    fig_bar = px.bar(
+        df_sorted.head(5), x='종목명', y='매력도',
+        title='매력도 상위 5개 종목',
+        color='매력도', color_continuous_scale='Viridis'
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
 
 else:
-    st.info(f"'{file_path}' 파일이 있어야 실행 가능합니다.")
+    st.error(f"현재 작업 폴더에 '{file_path}' 파일이 없습니다.")

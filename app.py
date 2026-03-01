@@ -13,13 +13,17 @@ if os.path.exists(file_path):
     df = pd.read_excel(file_path)
     df.columns = df.columns.str.strip()
 
+    # -----------------------------
     # Stochastic 컬럼 찾기
+    # -----------------------------
     stochastic_col = next((col for col in df.columns if 'stochastic' in col.lower()), None)
     if not stochastic_col:
         st.error("Stochastic 컬럼을 찾을 수 없습니다.")
         st.stop()
 
+    # -----------------------------
     # ROE 컬럼 3개 찾기
+    # -----------------------------
     roe_cols = [c for c in df.columns if 'ROE' in c and '평균' not in c and '최종' not in c]
     if len(roe_cols) < 3:
         st.error(f"ROE 컬럼 3개가 필요합니다. 현재: {roe_cols}")
@@ -27,7 +31,7 @@ if os.path.exists(file_path):
     roe_cols = roe_cols[:3]
 
     # -----------------------------
-    # 안전 숫자 변환
+    # 안전 숫자 변환 함수
     # -----------------------------
     def to_numeric_safe(series):
         return (
@@ -43,19 +47,23 @@ if os.path.exists(file_path):
         series = np.where(series.abs() < 1, series * 100, series)
         return pd.Series(series).round(2)
 
-    # 퍼센트 처리
+    # -----------------------------
+    # 퍼센트 강건 처리
+    # -----------------------------
     if '등락률' in df.columns:
         df['등락률'] = normalize_percent(df['등락률'])
 
     if '배당수익률' in df.columns:
         df['배당수익률'] = normalize_percent(df['배당수익률'])
 
-    # 숫자 변환
+    # 숫자형 변환
     num_cols = ['현재가', 'BPS', stochastic_col] + roe_cols
     for col in num_cols:
         df[col] = to_numeric_safe(df[col])
 
+    # -----------------------------
     # 계산
+    # -----------------------------
     df['추정ROE'] = (
         df[roe_cols[0]]*0.4 +
         df[roe_cols[1]]*0.35 +
@@ -71,12 +79,16 @@ if os.path.exists(file_path):
     ) * 100
     df['복리수익률'] = df['복리수익률'].round(2)
 
-    # 🔥 복리수익률 기준 정렬
+    # -----------------------------
+    # 복리수익률 기준 정렬
+    # -----------------------------
     df_sorted = df.sort_values(by='복리수익률', ascending=False).reset_index(drop=True)
     df_sorted['순위'] = df_sorted.index + 1
     df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
 
+    # -----------------------------
     # 표시 컬럼 순서
+    # -----------------------------
     display_cols = [
         '순위', '종목명', '현재가', '등락률',
         '배당수익률', '추정ROE',
@@ -86,7 +98,9 @@ if os.path.exists(file_path):
 
     df_show = df_sorted[display_cols]
 
-    # 하이라이트
+    # -----------------------------
+    # 하이라이트 (복리수익률 ≥ 15%)
+    # -----------------------------
     def highlight_high_return(row):
         return [
             'background-color: lightgreen'
@@ -109,15 +123,17 @@ if os.path.exists(file_path):
         df_show.style
               .apply(highlight_high_return, axis=1)
               .format(format_dict)
-              .set_properties(**{'text-align': 'center'})
+              .set_properties(**{'text-align': 'center'})  # 데이터 가운데
               .set_table_styles(
-                  [{'selector':'th','props':[('text-align','center')]}]
+                  [{'selector': 'th', 'props': [('text-align', 'center')]}]  # 헤더 가운데
               )
     )
 
     st.dataframe(styled_df, use_container_width=True, height=500, hide_index=True)
 
+    # -----------------------------
     # 산점도 (15% 이상 색 구분)
+    # -----------------------------
     df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
 
     fig_scatter = px.scatter(
@@ -129,6 +145,7 @@ if os.path.exists(file_path):
         title='복리수익률 vs RN 산점도',
         labels={'RN':'RN(Stochastic %K)', '복리수익률':'복리수익률(%)'}
     )
+
     st.plotly_chart(fig_scatter, use_container_width=True)
 
 else:

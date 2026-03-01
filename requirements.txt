@@ -6,3 +6,4 @@ plotly
 openpyxl
 requests
 beautifulsoup4
+streamlit-aggrid

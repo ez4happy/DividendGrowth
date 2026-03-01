@@ -65,23 +65,30 @@ for col in numeric_cols:
     if col in df.columns:
         df[col] = to_float(df[col])
 
+# 등락률 퍼센트 형식 변환 (-4.86% 형태 유지)
+if '등락률' in df.columns:
+    df['등락률'] = (
+        df['등락률']
+        .astype(str)
+        .str.replace('%', '', regex=False)
+        .astype(float)
+        .round(2)
+        .map(lambda x: f"{x:.2f}%")
+    )
+
 # =========================
 # 계산 컬럼 생성
 # =========================
-
-# 추정 ROE
 df['추정ROE'] = (
     df[roe_cols[0]] * 0.4 +
     df[roe_cols[1]] * 0.35 +
     df[roe_cols[2]] * 0.25
 )
 
-# 10년 후 BPS
 df['10년후BPS'] = (
     df['BPS'] * (1 + df['추정ROE'] / 100) ** 10
 )
 
-# 복리수익률 (0 나누기 방지)
 df['복리수익률'] = np.where(
     df['현재가'] > 0,
     ((df['10년후BPS'] / df['현재가']) ** (1/10) - 1) * 100,
@@ -103,14 +110,20 @@ df_sorted['순위'] = df_sorted.index + 1
 df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
 
 # =========================
-# 표시 컬럼 구성
+# 표시 컬럼 순서 (요구사항 반영)
 # =========================
-main_cols = (
-    ['순위', '종목명', '현재가', '등락률'] +
-    roe_cols +
-    ['BPS', '배당수익률', 'RN', '추정ROE',
-     '10년후BPS', '복리수익률']
-)
+main_cols = [
+    '순위',
+    '종목명',
+    '현재가',
+    '등락률',
+    '배당수익률',
+    '추정ROE',
+    'BPS',
+    '10년후BPS',
+    '복리수익률',
+    'RN'
+]
 
 df_show = df_sorted[[c for c in main_cols if c in df_sorted.columns]]
 
@@ -127,15 +140,12 @@ def highlight_high_return(row):
 
 format_dict = {
     '현재가': '{:,.0f}',
-    roe_cols[0]: '{:.2f}',
-    roe_cols[1]: '{:.2f}',
-    roe_cols[2]: '{:.2f}',
-    'BPS': '{:,.0f}',
     '배당수익률': '{:.2f}',
-    'RN': '{:.0f}',
     '추정ROE': '{:.2f}',
+    'BPS': '{:,.0f}',
     '10년후BPS': '{:,.0f}',
-    '복리수익률': '{:.2f}'
+    '복리수익률': '{:.2f}',
+    'RN': '{:.0f}'
 }
 
 styled_df = (

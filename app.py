@@ -17,7 +17,7 @@ df = pd.read_excel(file_path)
 df.columns = df.columns.str.strip()
 
 # ----------------------------
-# 안전한 숫자 변환
+# 안전 숫자 변환
 # ----------------------------
 def to_numeric_safe(series):
     return (
@@ -29,7 +29,7 @@ def to_numeric_safe(series):
     )
 
 # ----------------------------
-# 퍼센트 자동 정규화 (엑셀 0.1067 대응)
+# 퍼센트 자동 정규화
 # ----------------------------
 def normalize_percent(series):
     if series.dtype == object:
@@ -119,7 +119,7 @@ df_sorted['순위'] = df_sorted.index + 1
 df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
 
 # ----------------------------
-# 표시 컬럼 순서 고정
+# 표시 컬럼 고정
 # ----------------------------
 display_cols = [
     '순위','종목명','현재가','등락률',
@@ -130,8 +130,13 @@ display_cols = [
 df_show = df_sorted[display_cols]
 
 # ----------------------------
-# 스타일링 (가운데 정렬)
+# 스타일 + 하이라이트
 # ----------------------------
+def highlight_high_return(row):
+    if row['복리수익률'] >= 15:
+        return ['background-color: #fff3cd'] * len(row)
+    return [''] * len(row)
+
 format_dict = {
     '현재가': '{:,.0f}',
     '등락률': '{:.2f}%',
@@ -146,19 +151,16 @@ format_dict = {
 styled_df = (
     df_show.style
         .format(format_dict)
+        .apply(highlight_high_return, axis=1)
         .set_properties(**{'text-align': 'center'})
         .set_table_styles([{'selector': 'th', 'props': [('text-align', 'center')]}])
 )
 
-st.dataframe(
-    styled_df,
-    use_container_width=True,
-    height="auto",
-    hide_index=True
-)
+# 🔥 스크롤 없이 전체 출력
+st.markdown(styled_df.to_html(), unsafe_allow_html=True)
 
 # ----------------------------
-# 산점도 (15% 이상 색상 구분)
+# 산점도
 # ----------------------------
 df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
 

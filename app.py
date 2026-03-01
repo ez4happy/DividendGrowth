@@ -17,7 +17,7 @@ df = pd.read_excel(file_path)
 df.columns = df.columns.str.strip()
 
 # ----------------------------
-# 공통 숫자 변환 함수
+# 안전한 숫자 변환
 # ----------------------------
 def to_numeric_safe(series):
     return (
@@ -29,7 +29,7 @@ def to_numeric_safe(series):
     )
 
 # ----------------------------
-# 퍼센트 자동 판별 함수
+# 퍼센트 자동 정규화 (엑셀 0.1067 대응)
 # ----------------------------
 def normalize_percent(series):
     if series.dtype == object:
@@ -37,7 +37,6 @@ def normalize_percent(series):
     else:
         series = pd.to_numeric(series, errors='coerce')
 
-    # 절대값 1보다 작은 경우 엑셀 퍼센트 형식으로 간주
     series = np.where(series.abs() < 1, series * 100, series)
     return pd.Series(series).round(2)
 
@@ -51,7 +50,7 @@ if missing:
     st.stop()
 
 # ----------------------------
-# Stochastic %K 자동 탐색
+# Stochastic %K 탐색
 # ----------------------------
 stochastic_col = next(
     (c for c in df.columns if 'stochastic' in c.lower() and '%k' in c.lower()),
@@ -66,19 +65,16 @@ if not stochastic_col:
 # ROE 컬럼 3개 탐색
 # ----------------------------
 roe_cols = [c for c in df.columns if 'ROE' in c and '평균' not in c and '최종' not in c]
-
 if len(roe_cols) < 3:
     st.error(f"ROE 컬럼 3개 필요. 현재: {roe_cols}")
     st.stop()
-
 roe_cols = roe_cols[:3]
 
 # ----------------------------
 # 숫자 변환
 # ----------------------------
-numeric_basic = ['현재가', 'BPS']
-for col in numeric_basic:
-    df[col] = to_numeric_safe(df[col])
+df['현재가'] = to_numeric_safe(df['현재가'])
+df['BPS'] = to_numeric_safe(df['BPS'])
 
 if '배당수익률' in df.columns:
     df['배당수익률'] = normalize_percent(df['배당수익률'])
@@ -123,7 +119,7 @@ df_sorted['순위'] = df_sorted.index + 1
 df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
 
 # ----------------------------
-# 표시 컬럼 순서 (고정)
+# 표시 컬럼 순서 고정
 # ----------------------------
 display_cols = [
     '순위','종목명','현재가','등락률',
@@ -134,7 +130,7 @@ display_cols = [
 df_show = df_sorted[display_cols]
 
 # ----------------------------
-# 스타일링
+# 스타일링 (가운데 정렬)
 # ----------------------------
 format_dict = {
     '현재가': '{:,.0f}',
@@ -154,7 +150,12 @@ styled_df = (
         .set_table_styles([{'selector': 'th', 'props': [('text-align', 'center')]}])
 )
 
-st.dataframe(styled_df, use_container_width=True, height=None, hide_index=True)
+st.dataframe(
+    styled_df,
+    use_container_width=True,
+    height="auto",
+    hide_index=True
+)
 
 # ----------------------------
 # 산점도 (15% 이상 색상 구분)

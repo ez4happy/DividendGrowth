@@ -102,43 +102,16 @@ for col in num_cols:
 
 df.dropna(subset=['현재가', 'BPS'], inplace=True)
 
-# ==================================================
-# ✅ 강건한 추정ROE 계산
-# ==================================================
-
-roe1 = df[roe_cols[0]]
-roe2 = df[roe_cols[1]]
-roe3 = df[roe_cols[2]]
-
-# 1️⃣ 극단값 방어
-roe1 = roe1.clip(lower=-20, upper=50)
-roe2 = roe2.clip(lower=-20, upper=50)
-roe3 = roe3.clip(lower=-20, upper=50)
-
-# 2️⃣ 중앙값 (이상치 제거 효과)
-roe_median = pd.concat([roe1, roe2, roe3], axis=1).median(axis=1)
-
-# 3️⃣ 최근 가중 평균
-roe_weighted = (
-    roe1 * 0.5 +
-    roe2 * 0.3 +
-    roe3 * 0.2
+# --------------------------------------------------
+# 계산
+# --------------------------------------------------
+df['추정ROE'] = (
+    df[roe_cols[0]]*0.3 +
+    df[roe_cols[1]]*0.1 +
+    df[roe_cols[2]]*0.6
 )
 
-# 4️⃣ 중앙값 + 가중평균 혼합
-df['추정ROE'] = (roe_median * 0.6) + (roe_weighted * 0.4)
-
-# 5️⃣ 음수 방어
-df['추정ROE'] = np.where(df['추정ROE'] < 0, 0, df['추정ROE'])
-
-# 6️⃣ 상한 제한 (과대성장 방지)
-df['추정ROE'] = df['추정ROE'].clip(lower=0, upper=40)
-
-df['추정ROE'] = df['추정ROE'].round(2)
-
-# ==================================================
-# 계산
-# ==================================================
+df['추정ROE'] = df['추정ROE'].fillna(0)
 
 df['10년후BPS'] = df['BPS'] * (1 + df['추정ROE']/100) ** 10
 df['10년후BPS'] = df['10년후BPS'].replace([np.inf, -np.inf], np.nan)
@@ -179,7 +152,7 @@ existing_cols = [c for c in display_cols if c in df_sorted.columns]
 df_show = df_sorted[existing_cols]
 
 # --------------------------------------------------
-# 하이라이트 (복리수익률 15% 이상)
+# 하이라이트
 # --------------------------------------------------
 def highlight_high_return(row):
     return [
@@ -205,6 +178,7 @@ styled_df = (
           .format(format_dict)
 )
 
+# height 자동 계산 (스크롤 최소화)
 row_height = 35
 calculated_height = min(len(df_show) * row_height + 60, 1000)
 
@@ -216,7 +190,7 @@ st.dataframe(
 )
 
 # --------------------------------------------------
-# 산점도 (15% 이상 다른 색)
+# 산점도
 # --------------------------------------------------
 df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
 

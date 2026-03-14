@@ -263,3 +263,8 @@ fig = px.scatter(
     labels={'RN': 'RN(Stochastic %K)', '복리수익률': '복리수익률(%)'}
 )
 st.plotly_chart(fig, use_container_width=True)
+
+import yfinance as yf
+df = yf.download('000240.KS', period='max', progress=False)
+print(len(df))
+print(df.tail(3))

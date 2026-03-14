@@ -264,7 +264,3 @@ fig = px.scatter(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-import yfinance as yf
-df = yf.download('000240.KS', period='max', progress=False)
-print(len(df))
-print(df.tail(3))

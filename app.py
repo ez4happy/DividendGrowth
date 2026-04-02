@@ -1,8 +1,12 @@
+import subprocess
+subprocess.run(["pip", "install", "pykrx", "-q"], check=True)
+
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
 import yfinance as yf
+from pykrx import stock as krx
 import os
 
 st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
@@ -11,17 +15,13 @@ st.title("📈 Dividend Growth Stock")
 file_path = "1.xlsx"
 
 # --------------------------------------------------
-# CSS 강제 가운데 정렬 (st.dataframe 대응)
+# CSS 강제 가운데 정렬
 # --------------------------------------------------
 st.markdown(
     """
     <style>
-    div[data-testid="stDataFrame"] th {
-        text-align: center !important;
-    }
-    div[data-testid="stDataFrame"] td {
-        text-align: center !important;
-    }
+    div[data-testid="stDataFrame"] th { text-align: center !important; }
+    div[data-testid="stDataFrame"] td { text-align: center !important; }
     </style>
     """,
     unsafe_allow_html=True
@@ -36,7 +36,6 @@ if not os.path.exists(file_path):
 # --------------------------------------------------
 df = pd.read_excel(file_path)
 df.columns = df.columns.str.strip()
-
 if df.empty:
     st.error("엑셀 파일이 비어 있습니다.")
     st.stop()
@@ -76,7 +75,7 @@ if not stochastic_col:
     st.stop()
 
 # --------------------------------------------------
-# ROE 컬럼 자동 탐색 (3개 이상 중 상위 3개)
+# ROE 컬럼 자동 탐색
 # --------------------------------------------------
 roe_cols = [c for c in df.columns if 'ROE' in c and '평균' not in c and '최종' not in c]
 if len(roe_cols) < 3:
@@ -98,7 +97,6 @@ if '배당수익률' in df.columns:
 num_cols = ['현재가', 'BPS', stochastic_col] + roe_cols
 for col in num_cols:
     df[col] = to_numeric_safe(df[col])
-
 df.dropna(subset=['현재가', 'BPS'], inplace=True)
 
 # --------------------------------------------------
@@ -108,8 +106,7 @@ df['추정ROE'] = (
     df[roe_cols[0]]*0.3 +
     df[roe_cols[1]]*0.1 +
     df[roe_cols[2]]*0.6
-)
-df['추정ROE'] = df['추정ROE'].fillna(0)
+).fillna(0)
 df['10년후BPS'] = df['BPS'] * (1 + df['추정ROE']/100) ** 10
 df['10년후BPS'] = df['10년후BPS'].replace([np.inf, -np.inf], np.nan)
 df['복리수익률'] = np.where(
@@ -117,8 +114,7 @@ df['복리수익률'] = np.where(
     ((df['10년후BPS'] / df['현재가']) ** (1/10) - 1) * 100,
     np.nan
 )
-df['복리수익률'] = df['복리수익률'].replace([np.inf, -np.inf], np.nan)
-df['복리수익률'] = df['복리수익률'].round(2)
+df['복리수익률'] = df['복리수익률'].replace([np.inf, -np.inf], np.nan).round(2)
 df.dropna(subset=['복리수익률'], inplace=True)
 
 if df.empty:
@@ -126,67 +122,117 @@ if df.empty:
     st.stop()
 
 # --------------------------------------------------
-# 와인스타인 4단계 순차 계산
-# 2단계  30주 이평 위 + 20주 신고가
-# 3단계  2단계였다가 MA150 아래 or 10주 신저가
-# 4단계  30주 이평 아래 + 20주 신저가
-# 1단계  4단계였다가 MA150 위 or 10주 신고가
+# 와인스타인 4단계 (메인 코드와 동일 로직)
+#
+# 2단계  종가 > MA150 AND 100일 신고가 (고가 기준)
+# 3단계  2단계였다가 AND (종가 < MA150 OR 50일 신저가 (저가 기준))
+# 4단계  종가 < MA150 AND 100일 신저가 (저가 기준)
+# 1단계  4단계였다가 AND (종가 > MA150 OR 50일 신고가 (고가 기준))
+# 그 외  이전 단계 유지
+#
+# 신고가/신저가 컬럼 명시적 생성 (True/False)
+# 고가99 = shift(1).rolling(99) -> 오늘 포함 100일
+# 저가99 = shift(1).rolling(99)
+# 고가49 = shift(1).rolling(49) -> 오늘 포함 50일
+# 저가49 = shift(1).rolling(49)
 # --------------------------------------------------
-def calc_weinstein(ticker_code):
+def calc_weinstein_stages_from_df(raw):
+    raw = raw.copy()
+    raw['MA150']   = raw['Close'].rolling(150).mean()
+    raw['고가99']   = raw['High'].shift(1).rolling(99).max()
+    raw['저가99']   = raw['Low'].shift(1).rolling(99).min()
+    raw['고가49']   = raw['High'].shift(1).rolling(49).max()
+    raw['저가49']   = raw['Low'].shift(1).rolling(49).min()
+    raw['신고가100'] = (raw['High'] > raw['고가99']).fillna(False)
+    raw['신저가100'] = (raw['Low']  < raw['저가99']).fillna(False)
+    raw['신고가50']  = (raw['High'] > raw['고가49']).fillna(False)
+    raw['신저가50']  = (raw['Low']  < raw['저가49']).fillna(False)
+
+    close_arr = raw['Close'].values
+    ma150_arr = raw['MA150'].values
+    nh100_arr = raw['신고가100'].values
+    nl100_arr = raw['신저가100'].values
+    nh50_arr  = raw['신고가50'].values
+    nl50_arr  = raw['신저가50'].values
+
+    n      = len(raw)
+    stages = [None] * n
+
+    for i in range(n):
+        if np.isnan(ma150_arr[i]):
+            stages[i] = None
+            continue
+
+        close = close_arr[i]
+        ma150 = ma150_arr[i]
+        nh100 = nh100_arr[i]
+        nl100 = nl100_arr[i]
+        nh50  = nh50_arr[i]
+        nl50  = nl50_arr[i]
+        prev  = stages[i-1] if i > 0 else None
+
+        if close > ma150 and nh100:
+            stages[i] = "2단계"
+        elif close < ma150 and nl100:
+            stages[i] = "4단계"
+        elif prev == "2단계" and (close < ma150 or nl50):
+            stages[i] = "3단계"
+        elif prev == "4단계" and (close > ma150 or nh50):
+            stages[i] = "1단계"
+        else:
+            stages[i] = prev if prev else "1단계"
+
+    return stages[-1] if stages[-1] else "N/A"
+
+
+# --------------------------------------------------
+# pykrx 데이터 로드 (메인 코드와 동일)
+# --------------------------------------------------
+today       = pd.Timestamp.today()
+pykrx_start = (today - pd.Timedelta(days=10*365)).strftime("%Y%m%d")
+pykrx_end   = today.strftime("%Y%m%d")
+
+@st.cache_data(ttl=3600)
+def get_weinstein_stage(ticker_code):
     try:
-        ticker = str(int(float(ticker_code))).zfill(6) + ".KS"
-        raw = yf.download(ticker, period="max", progress=False)
+        code = str(int(float(ticker_code))).zfill(6)
+        raw  = krx.get_market_ohlcv(pykrx_start, pykrx_end, code)
         if raw.empty:
             return "N/A"
-        if isinstance(raw.columns, pd.MultiIndex):
-            raw.columns = raw.columns.get_level_values(0)
+
         raw = raw.reset_index()
-        raw['Date'] = pd.to_datetime(raw['Date']).dt.tz_localize(None)
-        raw = raw[['Date','Close']].dropna()
 
-        raw['MA150']  = raw['Close'].rolling(150).mean()
-        raw['고가100'] = raw['Close'].rolling(100).max()
-        raw['저가100'] = raw['Close'].rolling(100).min()
-        raw['고가50']  = raw['Close'].rolling(50).max()
-        raw['저가50']  = raw['Close'].rolling(50).min()
+        # pykrx 컬럼명 정규화 (버전 무관)
+        col_map = {}
+        for col in raw.columns:
+            if '날짜' in str(col) or 'Date' in str(col): col_map[col] = 'Date'
+            elif '고가' in str(col):  col_map[col] = 'High'
+            elif '저가' in str(col):  col_map[col] = 'Low'
+            elif '종가' in str(col):  col_map[col] = 'Close'
+            elif '거래량' in str(col): col_map[col] = 'Volume'
+        raw = raw.rename(columns=col_map)
 
-        stages = [None] * len(raw)
-        for i in range(len(raw)):
-            close   = raw['Close'].iloc[i]
-            ma150   = raw['MA150'].iloc[i]
-            high100 = raw['고가100'].iloc[i]
-            low100  = raw['저가100'].iloc[i]
-            high50  = raw['고가50'].iloc[i]
-            low50   = raw['저가50'].iloc[i]
+        if 'Date' not in raw.columns and raw.index.name in ['날짜', 'Date']:
+            raw = raw.rename_axis('Date').reset_index()
 
-            if pd.isna(ma150) or pd.isna(high100) or pd.isna(low100):
-                stages[i] = None
-                continue
+        raw['Date'] = pd.to_datetime(raw['Date'])
+        raw = raw[['Date','Close','High','Low','Volume']].dropna()
+        raw = raw.sort_values('Date').reset_index(drop=True)
 
-            prev = stages[i-1] if i > 0 else None
+        if len(raw) < 150:
+            return "N/A"
 
-            if close > ma150 and close >= high100:
-                stages[i] = "2단계"
-            elif prev == "2단계" and (close < ma150 or close <= low50):
-                stages[i] = "3단계"
-            elif close < ma150 and close <= low100:
-                stages[i] = "4단계"
-            elif prev == "4단계" and (close > ma150 or close >= high50):
-                stages[i] = "1단계"
-            else:
-                stages[i] = prev if prev else "1단계"
-
-        return stages[-1] if stages[-1] else "N/A"
+        return calc_weinstein_stages_from_df(raw)
 
     except Exception:
         return "N/A"
 
 # --------------------------------------------------
-# 와인스타인 계산 (캐시)
+# 와인스타인 계산
 # --------------------------------------------------
 if '종목코드' in df.columns:
-    with st.spinner("와인스타인 단계 계산 중..."):
-        df['와인스타인'] = df['종목코드'].apply(calc_weinstein)
+    with st.spinner("와인스타인 단계 계산 중... (pykrx 실제 주가 기준)"):
+        df['와인스타인'] = df['종목코드'].apply(get_weinstein_stage)
 else:
     df['와인스타인'] = "N/A"
 
@@ -198,7 +244,7 @@ df_sorted['순위'] = df_sorted.index + 1
 df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
 
 # --------------------------------------------------
-# 표시 컬럼 (와인스타인 맨 끝에 추가)
+# 표시 컬럼
 # --------------------------------------------------
 display_cols = [
     '순위', '종목명', '현재가', '등락률',
@@ -221,14 +267,14 @@ def highlight_high_return(row):
     ]
 
 format_dict = {
-    '현재가': '{:,.0f}',
-    '등락률': '{:.2f}%',
+    '현재가':    '{:,.0f}',
+    '등락률':    '{:.2f}%',
     '배당수익률': '{:.2f}%',
-    '추정ROE': '{:.2f}',
-    'BPS': '{:,.0f}',
+    '추정ROE':  '{:.2f}',
+    'BPS':      '{:,.0f}',
     '10년후BPS': '{:,.0f}',
     '복리수익률': '{:.2f}%',
-    'RN': '{:.0f}'
+    'RN':       '{:.0f}'
 }
 
 styled_df = (
@@ -237,10 +283,8 @@ styled_df = (
           .format(format_dict)
 )
 
-# height 자동 계산 (스크롤 최소화)
 row_height = 35
 calculated_height = min(len(df_show) * row_height + 60, 1000)
-
 st.dataframe(
     styled_df,
     use_container_width=True,
@@ -252,7 +296,6 @@ st.dataframe(
 # 산점도
 # --------------------------------------------------
 df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
-
 fig = px.scatter(
     df_sorted,
     x='RN',
@@ -263,4 +306,3 @@ fig = px.scatter(
     labels={'RN': 'RN(Stochastic %K)', '복리수익률': '복리수익률(%)'}
 )
 st.plotly_chart(fig, use_container_width=True)
-

@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import yfinance as yf
-from pykrx import stock as krx
+import requests
 import os
 
 st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
@@ -183,44 +182,68 @@ def calc_weinstein_stages_from_df(raw):
 
 
 # --------------------------------------------------
-# pykrx 데이터 로드 (메인 코드와 동일)
+# KRX 직접 API 호출 (pykrx 대신)
 # --------------------------------------------------
+def get_krx_ohlcv(code, start_date, end_date):
+    """KRX 정보데이터시스템 직접 호출 - 실제 주가 반환"""
+    url = "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd"
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Referer": "http://data.krx.co.kr/",
+    }
+    params = {
+        "bld": "dbms/MDC/STAT/standard/MDCSTAT01701",
+        "isuCd": code,
+        "isuCd2": "",
+        "strtDd": start_date,
+        "endDd": end_date,
+        "adjStkPrc_check": "N",   # 수정주가 미적용 -> 실제 주가
+        "adjStkPrc": "1",
+        "share": "1",
+        "money": "1",
+        "csvxls_isNo": "false",
+    }
+    try:
+        resp = requests.post(url, headers=headers, data=params, timeout=30)
+        data = resp.json()
+        rows = data.get("output", [])
+        if not rows:
+            return pd.DataFrame()
+
+        df = pd.DataFrame(rows)
+        df = df.rename(columns={
+            "TRD_DD":   "Date",
+            "TDD_OPNPRC": "Open",
+            "TDD_HGPRC":  "High",
+            "TDD_LWPRC":  "Low",
+            "TDD_CLSPRC": "Close",
+            "ACC_TRDVOL": "Volume",
+        })
+        for col in ["Open","High","Low","Close","Volume"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(
+                    df[col].astype(str).str.replace(",",""), errors="coerce"
+                )
+        df["Date"] = pd.to_datetime(df["Date"], format="%Y/%m/%d", errors="coerce")
+        df = df[["Date","Close","High","Low","Volume"]].dropna()
+        df = df.sort_values("Date").reset_index(drop=True)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
 today       = pd.Timestamp.today()
-pykrx_start = (today - pd.Timedelta(days=10*365)).strftime("%Y%m%d")
-pykrx_end   = today.strftime("%Y%m%d")
+krx_start   = (today - pd.Timedelta(days=10*365)).strftime("%Y%m%d")
+krx_end     = today.strftime("%Y%m%d")
 
 @st.cache_data(ttl=3600)
 def get_weinstein_stage(ticker_code):
     try:
         code = str(int(float(ticker_code))).zfill(6)
-        raw  = krx.get_market_ohlcv(pykrx_start, pykrx_end, code)
-        if raw.empty:
+        raw  = get_krx_ohlcv(code, krx_start, krx_end)
+        if raw.empty or len(raw) < 150:
             return "N/A"
-
-        raw = raw.reset_index()
-
-        # pykrx 컬럼명 정규화 (버전 무관)
-        col_map = {}
-        for col in raw.columns:
-            if '날짜' in str(col) or 'Date' in str(col): col_map[col] = 'Date'
-            elif '고가' in str(col):  col_map[col] = 'High'
-            elif '저가' in str(col):  col_map[col] = 'Low'
-            elif '종가' in str(col):  col_map[col] = 'Close'
-            elif '거래량' in str(col): col_map[col] = 'Volume'
-        raw = raw.rename(columns=col_map)
-
-        if 'Date' not in raw.columns and raw.index.name in ['날짜', 'Date']:
-            raw = raw.rename_axis('Date').reset_index()
-
-        raw['Date'] = pd.to_datetime(raw['Date'])
-        raw = raw[['Date','Close','High','Low','Volume']].dropna()
-        raw = raw.sort_values('Date').reset_index(drop=True)
-
-        if len(raw) < 150:
-            return "N/A"
-
         return calc_weinstein_stages_from_df(raw)
-
     except Exception:
         return "N/A"
 

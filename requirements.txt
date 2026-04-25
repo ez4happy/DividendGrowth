@@ -1,8 +1,6 @@
-setuptools>=68.0.0
-wheel
 streamlit
 pandas
 numpy
 plotly
 openpyxl
-pykrx
+finance-datareader

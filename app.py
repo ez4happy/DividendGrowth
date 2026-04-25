@@ -184,6 +184,9 @@ if pd.notna(latest_date):
     date_str = latest_date.strftime("%Y-%m-%d")
     date_placeholder.caption(f"📅 **데이터 기준일:** {date_str} (KRX 종가 기준)  |  🔄 **조회 시각:** {now_str}")
 
+# --------------------------------------------------
+# 계산
+# --------------------------------------------------
 df['추정ROE'] = (
     df[roe_cols[0]]*0.3 +
     df[roe_cols[1]]*0.1 +
@@ -198,6 +201,24 @@ df['복리수익률'] = np.where(
 )
 df['복리수익률'] = df['복리수익률'].replace([np.inf, -np.inf], np.nan).round(2)
 df.dropna(subset=['복리수익률'], inplace=True)
+
+# --------------------------------------------------
+# 🔍 디버그: 기아 행 raw 값 출력
+# --------------------------------------------------
+debug_row = df[df['종목명'] == '기아']
+if not debug_row.empty:
+    st.write("### 🔍 기아 디버그 정보")
+    st.write(f"**선택된 ROE 컬럼들:** {roe_cols}")
+    st.write({
+        f'ROE[0] ({roe_cols[0]})': float(debug_row[roe_cols[0]].iloc[0]),
+        f'ROE[1] ({roe_cols[1]})': float(debug_row[roe_cols[1]].iloc[0]),
+        f'ROE[2] ({roe_cols[2]})': float(debug_row[roe_cols[2]].iloc[0]),
+        '추정ROE (raw)': float(debug_row['추정ROE'].iloc[0]),
+        'BPS (raw)': float(debug_row['BPS'].iloc[0]),
+        '현재가 (raw)': float(debug_row['현재가'].iloc[0]),
+        '10년후BPS (raw)': float(debug_row['10년후BPS'].iloc[0]),
+        '복리수익률 (raw)': float(debug_row['복리수익률'].iloc[0]),
+    })
 
 if df.empty:
     st.warning("계산 후 표시할 데이터가 없습니다.")

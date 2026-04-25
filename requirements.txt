@@ -3,4 +3,4 @@ pandas
 numpy
 plotly
 openpyxl
-finance-datareader
+yfinance

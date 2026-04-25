@@ -13,9 +13,6 @@ date_placeholder = st.empty()
 
 file_path = "1.xlsx"
 
-# --------------------------------------------------
-# CSS
-# --------------------------------------------------
 st.markdown(
     """
     <style>
@@ -75,9 +72,7 @@ for col in num_cols:
     df[col] = to_numeric_safe(df[col])
 df.dropna(subset=['BPS'], inplace=True)
 
-# --------------------------------------------------
-# 와인스타인 4단계 계산
-# --------------------------------------------------
+
 def calc_weinstein_stages_from_df(raw):
     raw = raw.copy()
     raw['MA150']    = raw['Close'].rolling(150).mean()
@@ -127,12 +122,8 @@ def calc_weinstein_stages_from_df(raw):
     return stages[-1] if stages[-1] else "N/A"
 
 
-# --------------------------------------------------
-# FinanceDataReader로 주가 데이터 가져오기
-# --------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_stock_data(ticker_code):
-    """(현재가, 등락률%, 와인스타인 단계, 마지막 거래일) 반환"""
     try:
         code = str(int(float(ticker_code))).zfill(6)
         today     = datetime.today()
@@ -162,9 +153,6 @@ def get_stock_data(ticker_code):
         return np.nan, np.nan, "N/A", pd.NaT
 
 
-# --------------------------------------------------
-# 일괄 수집
-# --------------------------------------------------
 with st.spinner("KRX 주가 데이터 수집 중..."):
     progress = st.progress(0)
     total    = len(df)
@@ -193,7 +181,83 @@ if df.empty:
 
 if pd.notna(latest_date):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    date_placeholder.caption(
-        f"📅 **데이터 기준일:** {latest_date.strftime('%Y-%m-%d')} "
-        f"(KRX 종가 기준) &nbsp;&nbsp;|&nbsp;&nbsp; "
-        f"🔄 *
+    date_str = latest_date.strftime("%Y-%m-%d")
+    date_placeholder.caption(f"📅 **데이터 기준일:** {date_str} (KRX 종가 기준)  |  🔄 **조회 시각:** {now_str}")
+
+df['추정ROE'] = (
+    df[roe_cols[0]]*0.3 +
+    df[roe_cols[1]]*0.1 +
+    df[roe_cols[2]]*0.6
+).fillna(0)
+df['10년후BPS'] = df['BPS'] * (1 + df['추정ROE']/100) ** 10
+df['10년후BPS'] = df['10년후BPS'].replace([np.inf, -np.inf], np.nan)
+df['복리수익률'] = np.where(
+    df['현재가'] > 0,
+    ((df['10년후BPS'] / df['현재가']) ** (1/10) - 1) * 100,
+    np.nan
+)
+df['복리수익률'] = df['복리수익률'].replace([np.inf, -np.inf], np.nan).round(2)
+df.dropna(subset=['복리수익률'], inplace=True)
+
+if df.empty:
+    st.warning("계산 후 표시할 데이터가 없습니다.")
+    st.stop()
+
+df_sorted = df.sort_values(by='복리수익률', ascending=False).reset_index(drop=True)
+df_sorted['순위'] = df_sorted.index + 1
+df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
+
+display_cols = [
+    '순위', '종목명', '현재가', '등락률',
+    '배당수익률', '추정ROE',
+    'BPS', '10년후BPS',
+    '복리수익률', 'RN',
+    '와인스타인'
+]
+existing_cols = [c for c in display_cols if c in df_sorted.columns]
+df_show = df_sorted[existing_cols]
+
+def highlight_high_return(row):
+    return [
+        'background-color: lightgreen'
+        if row['복리수익률'] >= 15 else ''
+        for _ in row
+    ]
+
+format_dict = {
+    '현재가':    '{:,.0f}',
+    '등락률':    '{:.2f}%',
+    '배당수익률': '{:.2f}%',
+    '추정ROE':  '{:.2f}',
+    'BPS':      '{:,.0f}',
+    '10년후BPS': '{:,.0f}',
+    '복리수익률': '{:.2f}%',
+    'RN':       '{:.0f}'
+}
+
+styled_df = (
+    df_show.style
+          .apply(highlight_high_return, axis=1)
+          .format(format_dict)
+)
+
+row_height = 35
+calculated_height = min(len(df_show) * row_height + 60, 1000)
+st.dataframe(
+    styled_df,
+    use_container_width=True,
+    height=calculated_height,
+    hide_index=True
+)
+
+df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
+fig = px.scatter(
+    df_sorted,
+    x='RN',
+    y='복리수익률',
+    color='HighReturn',
+    hover_name='종목명',
+    title='복리수익률 vs RN',
+    labels={'RN': 'RN(Stochastic %K)', '복리수익률': '복리수익률(%)'}
+)
+st.plotly_chart(fig, use_container_width=True)

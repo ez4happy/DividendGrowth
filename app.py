@@ -2,20 +2,19 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import FinanceDataReader as fdr
+import yfinance as yf
 from datetime import datetime, timedelta
 import os
 
 st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
 st.title("📈 Dividend Growth Stock")
 
-# 데이터 기준일 표시용 placeholder
 date_placeholder = st.empty()
 
 file_path = "1.xlsx"
 
 # --------------------------------------------------
-# CSS 강제 가운데 정렬
+# CSS
 # --------------------------------------------------
 st.markdown(
     """
@@ -31,18 +30,12 @@ if not os.path.exists(file_path):
     st.error(f"'{file_path}' 파일이 존재하지 않습니다.")
     st.stop()
 
-# --------------------------------------------------
-# 데이터 로드
-# --------------------------------------------------
 df = pd.read_excel(file_path)
 df.columns = df.columns.str.strip()
 if df.empty:
     st.error("엑셀 파일이 비어 있습니다.")
     st.stop()
 
-# --------------------------------------------------
-# 안전 숫자 변환
-# --------------------------------------------------
 def to_numeric_safe(series):
     return pd.to_numeric(
         series.astype(str)
@@ -57,9 +50,6 @@ def normalize_percent(series):
     series = np.where(series.abs() <= 1, series * 100, series)
     return pd.Series(series).round(2)
 
-# --------------------------------------------------
-# 필수 컬럼 체크
-# --------------------------------------------------
 required_base_cols = ['종목명', '종목코드', 'BPS']
 for col in required_base_cols:
     if col not in df.columns:
@@ -138,24 +128,42 @@ def calc_weinstein_stages_from_df(raw):
 
 
 # --------------------------------------------------
-# FinanceDataReader로 주가 데이터 가져오기
+# yfinance에서 데이터 가져오기
+# 핵심 변경: auto_adjust=False → 원본 종가(KRX 표시값과 동일) 사용
 # --------------------------------------------------
+def _download_yf(code_with_suffix):
+    """yfinance 다운로드 헬퍼. auto_adjust=False로 원본 OHLC 받음"""
+    today     = datetime.today()
+    from_date = (today - timedelta(days=365*3)).strftime("%Y-%m-%d")
+    to_date   = (today + timedelta(days=1)).strftime("%Y-%m-%d")
+    raw = yf.download(
+        code_with_suffix,
+        start=from_date,
+        end=to_date,
+        progress=False,
+        auto_adjust=False,   # ← 중요: 수정종가 아닌 원본 종가
+        actions=False,
+    )
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = raw.columns.get_level_values(0)
+    return raw
+
 @st.cache_data(ttl=3600)
 def get_stock_data(ticker_code):
     """(현재가, 등락률%, 와인스타인 단계, 마지막 거래일) 반환"""
     try:
         code = str(int(float(ticker_code))).zfill(6)
-        today     = datetime.today()
-        from_date = (today - timedelta(days=365*3)).strftime("%Y-%m-%d")
-        to_date   = today.strftime("%Y-%m-%d")
 
-        raw = fdr.DataReader(code, from_date, to_date)
+        # 코스피(.KS) 먼저, 없으면 코스닥(.KQ)
+        raw = _download_yf(code + ".KS")
+        if raw is None or raw.empty:
+            raw = _download_yf(code + ".KQ")
         if raw is None or raw.empty:
             return np.nan, np.nan, "N/A", pd.NaT
 
         raw = raw.reset_index()
-        # FinanceDataReader 컬럼: Date, Open, High, Low, Close, Volume, Change
-        raw = raw[['Date', 'Close', 'High', 'Low', 'Volume', 'Change']].dropna(
+        raw['Date'] = pd.to_datetime(raw['Date']).dt.tz_localize(None)
+        raw = raw[['Date', 'Close', 'High', 'Low', 'Volume']].dropna(
             subset=['Close', 'High', 'Low']
         )
         raw = raw.sort_values('Date').reset_index(drop=True)
@@ -164,8 +172,8 @@ def get_stock_data(ticker_code):
             return np.nan, np.nan, "N/A", pd.NaT
 
         current_price = float(raw['Close'].iloc[-1])
-        # Change는 소수(0.0123 = 1.23%)로 옴 → 퍼센트로 변환
-        change_pct    = float(raw['Change'].iloc[-1]) * 100
+        prev_price    = float(raw['Close'].iloc[-2])
+        change_pct    = ((current_price - prev_price) / prev_price * 100) if prev_price > 0 else np.nan
         last_date     = pd.to_datetime(raw['Date'].iloc[-1])
 
         stage = calc_weinstein_stages_from_df(raw) if len(raw) >= 150 else "N/A"
@@ -175,9 +183,9 @@ def get_stock_data(ticker_code):
 
 
 # --------------------------------------------------
-# 종목별 주가 일괄 수집
+# 일괄 수집
 # --------------------------------------------------
-with st.spinner("KRX 주가 데이터 수집 중..."):
+with st.spinner("Yahoo Finance에서 주가 데이터 수집 중..."):
     progress = st.progress(0)
     total    = len(df)
     rows     = []
@@ -203,12 +211,11 @@ if df.empty:
     st.warning("주가 데이터를 가져온 종목이 없습니다.")
     st.stop()
 
-# 데이터 기준일 표시
 if pd.notna(latest_date):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     date_placeholder.caption(
         f"📅 **데이터 기준일:** {latest_date.strftime('%Y-%m-%d')} "
-        f"(KRX 종가 기준) &nbsp;&nbsp;|&nbsp;&nbsp; "
+        f"(Yahoo Finance 종가 기준) &nbsp;&nbsp;|&nbsp;&nbsp; "
         f"🔄 **조회 시각:** {now_str}"
     )
 
@@ -234,9 +241,6 @@ if df.empty:
     st.warning("계산 후 표시할 데이터가 없습니다.")
     st.stop()
 
-# --------------------------------------------------
-# 정렬 / 표시
-# --------------------------------------------------
 df_sorted = df.sort_values(by='복리수익률', ascending=False).reset_index(drop=True)
 df_sorted['순위'] = df_sorted.index + 1
 df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
@@ -284,7 +288,6 @@ st.dataframe(
     hide_index=True
 )
 
-# 산점도
 df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
 fig = px.scatter(
     df_sorted,

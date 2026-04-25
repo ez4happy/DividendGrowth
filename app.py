@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from pykrx import stock as krx
+import FinanceDataReader as fdr
 from datetime import datetime, timedelta
 import os
 
 st.set_page_config(page_title="Dividend Growth Stock", layout="wide")
 st.title("📈 Dividend Growth Stock")
 
-# 데이터 기준일 표시용 placeholder (수집 후 업데이트)
+# 데이터 기준일 표시용 placeholder
 date_placeholder = st.empty()
 
 file_path = "1.xlsx"
@@ -58,7 +58,7 @@ def normalize_percent(series):
     return pd.Series(series).round(2)
 
 # --------------------------------------------------
-# 필수 컬럼 체크 (현재가는 API에서 가져옴, 종목코드 필수)
+# 필수 컬럼 체크
 # --------------------------------------------------
 required_base_cols = ['종목명', '종목코드', 'BPS']
 for col in required_base_cols:
@@ -66,32 +66,20 @@ for col in required_base_cols:
         st.error(f"필수 컬럼 누락: {col}")
         st.stop()
 
-# --------------------------------------------------
-# Stochastic 컬럼 자동 탐색
-# --------------------------------------------------
 stochastic_col = next((c for c in df.columns if 'stochastic' in c.lower()), None)
 if not stochastic_col:
     st.error("Stochastic 컬럼을 찾을 수 없습니다.")
     st.stop()
 
-# --------------------------------------------------
-# ROE 컬럼 자동 탐색
-# --------------------------------------------------
 roe_cols = [c for c in df.columns if 'ROE' in c and '평균' not in c and '최종' not in c]
 if len(roe_cols) < 3:
     st.error("ROE 컬럼이 3개 이상 필요합니다.")
     st.stop()
 roe_cols = roe_cols[:3]
 
-# --------------------------------------------------
-# 퍼센트 처리 (배당수익률만 엑셀에서 읽음)
-# --------------------------------------------------
 if '배당수익률' in df.columns:
     df['배당수익률'] = normalize_percent(df['배당수익률'])
 
-# --------------------------------------------------
-# 숫자 변환 (현재가/등락률은 pykrx에서 받음)
-# --------------------------------------------------
 num_cols = ['BPS', stochastic_col] + roe_cols
 for col in num_cols:
     df[col] = to_numeric_safe(df[col])
@@ -150,31 +138,24 @@ def calc_weinstein_stages_from_df(raw):
 
 
 # --------------------------------------------------
-# pykrx에서 현재가 + 등락률 + 와인스타인 + 마지막 거래일
+# FinanceDataReader로 주가 데이터 가져오기
 # --------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_stock_data(ticker_code):
-    """pykrx 일봉 데이터로 (현재가, 등락률%, 와인스타인 단계, 마지막 거래일) 반환"""
+    """(현재가, 등락률%, 와인스타인 단계, 마지막 거래일) 반환"""
     try:
         code = str(int(float(ticker_code))).zfill(6)
         today     = datetime.today()
-        from_date = (today - timedelta(days=365*3)).strftime("%Y%m%d")
-        to_date   = today.strftime("%Y%m%d")
+        from_date = (today - timedelta(days=365*3)).strftime("%Y-%m-%d")
+        to_date   = today.strftime("%Y-%m-%d")
 
-        raw = krx.get_market_ohlcv(from_date, to_date, code)
+        raw = fdr.DataReader(code, from_date, to_date)
         if raw is None or raw.empty:
             return np.nan, np.nan, "N/A", pd.NaT
 
-        raw = raw.reset_index().rename(columns={
-            '날짜':   'Date',
-            '시가':   'Open',
-            '고가':   'High',
-            '저가':   'Low',
-            '종가':   'Close',
-            '거래량': 'Volume',
-            '등락률': 'ChangePct'
-        })
-        raw = raw[['Date', 'Close', 'High', 'Low', 'Volume', 'ChangePct']].dropna(
+        raw = raw.reset_index()
+        # FinanceDataReader 컬럼: Date, Open, High, Low, Close, Volume, Change
+        raw = raw[['Date', 'Close', 'High', 'Low', 'Volume', 'Change']].dropna(
             subset=['Close', 'High', 'Low']
         )
         raw = raw.sort_values('Date').reset_index(drop=True)
@@ -183,7 +164,8 @@ def get_stock_data(ticker_code):
             return np.nan, np.nan, "N/A", pd.NaT
 
         current_price = float(raw['Close'].iloc[-1])
-        change_pct    = float(raw['ChangePct'].iloc[-1])
+        # Change는 소수(0.0123 = 1.23%)로 옴 → 퍼센트로 변환
+        change_pct    = float(raw['Change'].iloc[-1]) * 100
         last_date     = pd.to_datetime(raw['Date'].iloc[-1])
 
         stage = calc_weinstein_stages_from_df(raw) if len(raw) >= 150 else "N/A"
@@ -193,9 +175,9 @@ def get_stock_data(ticker_code):
 
 
 # --------------------------------------------------
-# 종목별 주가 데이터 일괄 수집
+# 종목별 주가 일괄 수집
 # --------------------------------------------------
-with st.spinner("KRX에서 주가 데이터 수집 중... (종목 수에 따라 시간이 걸려요)"):
+with st.spinner("KRX 주가 데이터 수집 중..."):
     progress = st.progress(0)
     total    = len(df)
     rows     = []
@@ -214,18 +196,14 @@ df['등락률']     = results['등락률'].round(2)
 df['와인스타인'] = results['와인스타인']
 df['기준일']     = results['기준일']
 
-# 가장 최근 거래일 (= 데이터 기준일)
 latest_date = df['기준일'].dropna().max()
 
-# API 실패 종목 제거
 df.dropna(subset=['현재가'], inplace=True)
 if df.empty:
-    st.warning("주가 데이터를 가져온 종목이 없습니다. 종목코드를 확인하세요.")
+    st.warning("주가 데이터를 가져온 종목이 없습니다.")
     st.stop()
 
-# --------------------------------------------------
-# 데이터 기준일 상단 표시
-# --------------------------------------------------
+# 데이터 기준일 표시
 if pd.notna(latest_date):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     date_placeholder.caption(
@@ -257,15 +235,12 @@ if df.empty:
     st.stop()
 
 # --------------------------------------------------
-# 정렬 및 순위
+# 정렬 / 표시
 # --------------------------------------------------
 df_sorted = df.sort_values(by='복리수익률', ascending=False).reset_index(drop=True)
 df_sorted['순위'] = df_sorted.index + 1
 df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
 
-# --------------------------------------------------
-# 표시 컬럼
-# --------------------------------------------------
 display_cols = [
     '순위', '종목명', '현재가', '등락률',
     '배당수익률', '추정ROE',
@@ -276,9 +251,6 @@ display_cols = [
 existing_cols = [c for c in display_cols if c in df_sorted.columns]
 df_show = df_sorted[existing_cols]
 
-# --------------------------------------------------
-# 하이라이트
-# --------------------------------------------------
 def highlight_high_return(row):
     return [
         'background-color: lightgreen'
@@ -312,9 +284,7 @@ st.dataframe(
     hide_index=True
 )
 
-# --------------------------------------------------
 # 산점도
-# --------------------------------------------------
 df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
 fig = px.scatter(
     df_sorted,

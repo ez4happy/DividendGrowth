@@ -13,6 +13,9 @@ date_placeholder = st.empty()
 
 file_path = "1.xlsx"
 
+# --------------------------------------------------
+# CSS 강제 가운데 정렬
+# --------------------------------------------------
 st.markdown(
     """
     <style>
@@ -27,12 +30,18 @@ if not os.path.exists(file_path):
     st.error(f"'{file_path}' 파일이 존재하지 않습니다.")
     st.stop()
 
+# --------------------------------------------------
+# 데이터 로드
+# --------------------------------------------------
 df = pd.read_excel(file_path)
 df.columns = df.columns.str.strip()
 if df.empty:
     st.error("엑셀 파일이 비어 있습니다.")
     st.stop()
 
+# --------------------------------------------------
+# 안전 숫자 변환
+# --------------------------------------------------
 def to_numeric_safe(series):
     return pd.to_numeric(
         series.astype(str)
@@ -47,6 +56,9 @@ def normalize_percent(series):
     series = np.where(series.abs() <= 1, series * 100, series)
     return pd.Series(series).round(2)
 
+# --------------------------------------------------
+# 필수 컬럼 체크
+# --------------------------------------------------
 required_base_cols = ['종목명', '종목코드', 'BPS']
 for col in required_base_cols:
     if col not in df.columns:
@@ -72,7 +84,9 @@ for col in num_cols:
     df[col] = to_numeric_safe(df[col])
 df.dropna(subset=['BPS'], inplace=True)
 
-
+# --------------------------------------------------
+# 와인스타인 4단계 계산
+# --------------------------------------------------
 def calc_weinstein_stages_from_df(raw):
     raw = raw.copy()
     raw['MA150']    = raw['Close'].rolling(150).mean()
@@ -122,8 +136,12 @@ def calc_weinstein_stages_from_df(raw):
     return stages[-1] if stages[-1] else "N/A"
 
 
+# --------------------------------------------------
+# FinanceDataReader로 주가 데이터 가져오기
+# --------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_stock_data(ticker_code):
+    """(현재가, 등락률%, 와인스타인 단계, 마지막 거래일) 반환"""
     try:
         code = str(int(float(ticker_code))).zfill(6)
         today     = datetime.today()
@@ -153,6 +171,9 @@ def get_stock_data(ticker_code):
         return np.nan, np.nan, "N/A", pd.NaT
 
 
+# --------------------------------------------------
+# 일괄 수집
+# --------------------------------------------------
 with st.spinner("KRX 주가 데이터 수집 중..."):
     progress = st.progress(0)
     total    = len(df)
@@ -202,28 +223,13 @@ df['복리수익률'] = np.where(
 df['복리수익률'] = df['복리수익률'].replace([np.inf, -np.inf], np.nan).round(2)
 df.dropna(subset=['복리수익률'], inplace=True)
 
-# --------------------------------------------------
-# 🔍 디버그: 기아 행 raw 값 출력
-# --------------------------------------------------
-debug_row = df[df['종목명'] == '기아']
-if not debug_row.empty:
-    st.write("### 🔍 기아 디버그 정보")
-    st.write(f"**선택된 ROE 컬럼들:** {roe_cols}")
-    st.write({
-        f'ROE[0] ({roe_cols[0]})': float(debug_row[roe_cols[0]].iloc[0]),
-        f'ROE[1] ({roe_cols[1]})': float(debug_row[roe_cols[1]].iloc[0]),
-        f'ROE[2] ({roe_cols[2]})': float(debug_row[roe_cols[2]].iloc[0]),
-        '추정ROE (raw)': float(debug_row['추정ROE'].iloc[0]),
-        'BPS (raw)': float(debug_row['BPS'].iloc[0]),
-        '현재가 (raw)': float(debug_row['현재가'].iloc[0]),
-        '10년후BPS (raw)': float(debug_row['10년후BPS'].iloc[0]),
-        '복리수익률 (raw)': float(debug_row['복리수익률'].iloc[0]),
-    })
-
 if df.empty:
     st.warning("계산 후 표시할 데이터가 없습니다.")
     st.stop()
 
+# --------------------------------------------------
+# 정렬 / 표시
+# --------------------------------------------------
 df_sorted = df.sort_values(by='복리수익률', ascending=False).reset_index(drop=True)
 df_sorted['순위'] = df_sorted.index + 1
 df_sorted.rename(columns={stochastic_col: 'RN'}, inplace=True)
@@ -271,6 +277,9 @@ st.dataframe(
     hide_index=True
 )
 
+# --------------------------------------------------
+# 산점도
+# --------------------------------------------------
 df_sorted['HighReturn'] = df_sorted['복리수익률'] >= 15
 fig = px.scatter(
     df_sorted,

@@ -172,7 +172,7 @@ def get_stock_data(ticker_code):
             ma25      = raw['Close'].rolling(25).mean()
             ma25_last = float(ma25.iloc[-1])
             if ma25_last > 0:
-                ikgyuk_25 = round(current_price / ma25_last * 100, 1)
+                ikgyuk_25 = round(current_price / ma25_last * 100, 2)
             else:
                 ikgyuk_25 = np.nan
         else:
@@ -233,7 +233,7 @@ df['추정ROE'] = (
 df['10년후BPS'] = df['BPS'] * (1 + df['추정ROE']/100) ** 10
 df['10년후BPS'] = df['10년후BPS'].replace([np.inf, -np.inf], np.nan)
 df['복리수익률'] = np.where(
-    df['현재가'] > 0,
+    (df['현재가'] > 0) & (df['10년후BPS'] > 0),   # 음수BPS → 복소수 방지
     ((df['10년후BPS'] / df['현재가']) ** (1/10) - 1) * 100,
     np.nan
 )
@@ -275,7 +275,7 @@ format_dict = {
     'BPS':       '{:,.0f}',
     '10년후BPS':  '{:,.0f}',
     '복리수익률':  '{:.2f}%',
-    '이격도':     '{:.1f}',   # ← 소수점 1자리 (예: 91.6)
+    '이격도':     '{:.2f}',   # ← 소수점 2자리
 }
 
 styled_df = (
@@ -294,21 +294,11 @@ st.dataframe(
 )
 
 # --------------------------------------------------
-# 이격도 가이드 표시
-# --------------------------------------------------
-st.caption(
-    "📌 **이격도 (25일 이평 기준)**: "
-    "100 = 이평과 일치  |  "
-    "🟢 90 이하 = BNF 매수 검토 구간  |  "
-    "🔴 110 이상 = 과열 구간"
-)
-
-# --------------------------------------------------
 # 산점도: 이격도 vs 복리수익률
 # ※ x축: 이격도(25일), y축: 복리수익률
 # 이격도 낮음 + 복리수익률 높음 = 최적 매수 후보
 # --------------------------------------------------
-df_plot = df_sorted.dropna(subset=['이격도'])
+df_plot = df_sorted.dropna(subset=['이격도']).copy()
 
 if not df_plot.empty:
     df_plot['HighReturn'] = df_plot['복리수익률'] >= 15
@@ -322,7 +312,7 @@ if not df_plot.empty:
         color_discrete_map={True: '#2ecc71', False: '#3498db'},
         hover_name='종목명',
         hover_data={
-            '이격도': ':.1f',
+            '이격도': ':.2f',
             '복리수익률': ':.2f',
             '배당수익률': ':.2f',
             '와인스타인': True,
@@ -373,20 +363,3 @@ if not df_plot.empty:
     )
 
     st.plotly_chart(fig, use_container_width=True)
-
-    # 최적 매수 후보 (이격도 ≤ 90 + 복리 ≥ 15%)
-    st.subheader("🎯 최적 매수 후보 (이격도 ≤ 90 + 복리수익률 ≥ 15%)")
-    best = df_plot[
-        (df_plot['이격도'] <= 90) & (df_plot['복리수익률'] >= 15)
-    ].sort_values('복리수익률', ascending=False)
-
-    if best.empty:
-        st.info("현재 조건을 만족하는 종목이 없습니다. (이격도 ≤ 90 + 복리 ≥ 15%)")
-    else:
-        best_cols = [c for c in ['종목명', '현재가', '이격도', '복리수익률',
-                                  '배당수익률', '와인스타인'] if c in best.columns]
-        st.dataframe(
-            best[best_cols].reset_index(drop=True),
-            use_container_width=True,
-            hide_index=True
-        )

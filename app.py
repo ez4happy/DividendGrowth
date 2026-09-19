@@ -13,6 +13,10 @@ date_placeholder = st.empty()
 
 file_path = "1.xlsx"
 
+# 이격도 참조선 (30주 이격도 기준값 — 필요시 여기만 수정)
+DISP_BUY_LINE  = 90    # 매수 검토
+DISP_HEAT_LINE = 110   # 과열
+
 # --------------------------------------------------
 # CSS 강제 가운데 정렬
 # --------------------------------------------------
@@ -58,9 +62,9 @@ def normalize_percent(series):
 
 # --------------------------------------------------
 # 필수 컬럼 체크
-# ※ stochastic_col 불필요 (25일 이격도로 대체)
+# ※ 이격도는 1.xlsx의 '이격도' 컬럼(30주 이격도)을 그대로 사용
 # --------------------------------------------------
-required_base_cols = ['종목명', '종목코드', 'BPS']
+required_base_cols = ['종목명', '종목코드', 'BPS', '이격도']
 for col in required_base_cols:
     if col not in df.columns:
         st.error(f"필수 컬럼 누락: {col}")
@@ -79,6 +83,9 @@ num_cols = ['BPS'] + roe_cols
 for col in num_cols:
     df[col] = to_numeric_safe(df[col])
 df.dropna(subset=['BPS'], inplace=True)
+
+# 30주 이격도 (엑셀 값 그대로, 100 = 30주 이평과 일치)
+df['이격도'] = to_numeric_safe(df['이격도']).round(2)
 
 # --------------------------------------------------
 # 와인스타인 4단계 계산
@@ -134,15 +141,11 @@ def calc_weinstein_stages_from_df(raw):
 
 # --------------------------------------------------
 # FinanceDataReader로 주가 데이터 가져오기
-# ※ 25일 이격도 추가 (기존 RN 대체)
-#    이격도 = 현재가 / 25일 이평 × 100
-#    100 = 이평과 일치
-#     91 = 이평 대비 -9% (BNF 매수 검토 구간)
-#    110 = 이평 대비 +10% (과열 구간)
+# ※ 이격도는 더 이상 여기서 계산하지 않음 (엑셀 값 사용)
 # --------------------------------------------------
 @st.cache_data(ttl=3600)
 def get_stock_data(ticker_code):
-    """(현재가, 등락률%, 와인스타인 단계, 25일 이격도, 마지막 거래일) 반환"""
+    """(현재가, 등락률%, 와인스타인 단계, 마지막 거래일) 반환"""
     try:
         code = str(int(float(ticker_code))).zfill(6)
         today     = datetime.today()
@@ -151,7 +154,7 @@ def get_stock_data(ticker_code):
 
         raw = fdr.DataReader(code, from_date, to_date)
         if raw is None or raw.empty:
-            return np.nan, np.nan, "N/A", np.nan, pd.NaT
+            return np.nan, np.nan, "N/A", pd.NaT
 
         raw = raw.reset_index()
         raw = raw[['Date', 'Close', 'High', 'Low', 'Volume', 'Change']].dropna(
@@ -160,29 +163,17 @@ def get_stock_data(ticker_code):
         raw = raw.sort_values('Date').reset_index(drop=True)
 
         if len(raw) < 2:
-            return np.nan, np.nan, "N/A", np.nan, pd.NaT
+            return np.nan, np.nan, "N/A", pd.NaT
 
         current_price = float(raw['Close'].iloc[-1])
         change_pct    = float(raw['Change'].iloc[-1]) * 100
         last_date     = pd.to_datetime(raw['Date'].iloc[-1])
 
-        # 25일 이격도 계산
-        # 데이터가 25일 이상일 때만 계산
-        if len(raw) >= 25:
-            ma25      = raw['Close'].rolling(25).mean()
-            ma25_last = float(ma25.iloc[-1])
-            if ma25_last > 0:
-                ikgyuk_25 = round(current_price / ma25_last * 100, 2)
-            else:
-                ikgyuk_25 = np.nan
-        else:
-            ikgyuk_25 = np.nan
-
         stage = calc_weinstein_stages_from_df(raw) if len(raw) >= 150 else "N/A"
-        return current_price, change_pct, stage, ikgyuk_25, last_date
+        return current_price, change_pct, stage, last_date
 
     except Exception:
-        return np.nan, np.nan, "N/A", np.nan, pd.NaT
+        return np.nan, np.nan, "N/A", pd.NaT
 
 
 # --------------------------------------------------
@@ -199,14 +190,14 @@ with st.spinner("KRX 주가 데이터 수집 중..."):
 
 results = pd.DataFrame(
     rows,
-    columns=['현재가', '등락률', '와인스타인', '이격도', '기준일'],
+    columns=['현재가', '등락률', '와인스타인', '기준일'],
     index=df.index
 )
 df['현재가']     = results['현재가']
 df['등락률']     = results['등락률'].round(2)
 df['와인스타인'] = results['와인스타인']
-df['이격도']     = results['이격도']   # ← 25일 이격도 (100 기준)
 df['기준일']     = results['기준일']
+# ※ df['이격도']는 엑셀 값 유지 (덮어쓰지 않음)
 
 latest_date = df['기준일'].dropna().max()
 
@@ -254,11 +245,11 @@ display_cols = [
     '순위', '종목명', '현재가', '등락률',
     '배당수익률', '추정ROE',
     'BPS', '10년후BPS',
-    '복리수익률', '이격도',   # ← RN 대신 이격도
+    '복리수익률', '이격도',
     '와인스타인'
 ]
 existing_cols = [c for c in display_cols if c in df_sorted.columns]
-df_show = df_sorted[existing_cols]
+df_show = df_sorted[existing_cols].rename(columns={'이격도': '30주 이격도'})
 
 def highlight_high_return(row):
     return [
@@ -268,14 +259,14 @@ def highlight_high_return(row):
     ]
 
 format_dict = {
-    '현재가':     '{:,.0f}',
-    '등락률':     '{:.2f}%',
-    '배당수익률':  '{:.2f}%',
-    '추정ROE':   '{:.2f}',
-    'BPS':       '{:,.0f}',
-    '10년후BPS':  '{:,.0f}',
-    '복리수익률':  '{:.2f}%',
-    '이격도':     '{:.2f}',   # ← 소수점 2자리
+    '현재가':      '{:,.0f}',
+    '등락률':      '{:.2f}%',
+    '배당수익률':   '{:.2f}%',
+    '추정ROE':    '{:.2f}',
+    'BPS':        '{:,.0f}',
+    '10년후BPS':   '{:,.0f}',
+    '복리수익률':   '{:.2f}%',
+    '30주 이격도':  '{:.2f}',
 }
 
 styled_df = (
@@ -294,8 +285,7 @@ st.dataframe(
 )
 
 # --------------------------------------------------
-# 산점도: 이격도 vs 복리수익률
-# ※ x축: 이격도(25일), y축: 복리수익률
+# 산점도: 30주 이격도 vs 복리수익률
 # 이격도 낮음 + 복리수익률 높음 = 최적 매수 후보
 # --------------------------------------------------
 df_plot = df_sorted.dropna(subset=['이격도']).copy()
@@ -303,7 +293,6 @@ df_plot = df_sorted.dropna(subset=['이격도']).copy()
 if not df_plot.empty:
     df_plot['HighReturn'] = df_plot['복리수익률'] >= 15
 
-    # 이격도 90~110 참조선 영역 표시
     fig = px.scatter(
         df_plot,
         x='이격도',
@@ -318,35 +307,32 @@ if not df_plot.empty:
             '와인스타인': True,
             'HighReturn': False,
         },
-        title='복리수익률 vs 25일 이격도',
+        title='복리수익률 vs 30주 이격도',
         labels={
-            '이격도': '이격도 (25일 이평 = 100)',
+            '이격도': '30주 이격도 (30주 이평 = 100)',
             '복리수익률': '복리수익률(%)',
             'HighReturn': '15% 이상'
         }
     )
 
-    # 이격도 90 수직 참조선 (BNF 매수 검토 기준)
     fig.add_vline(
-        x=90,
+        x=DISP_BUY_LINE,
         line_dash="dash",
         line_color="green",
-        annotation_text="이격도 90 (매수 검토)",
+        annotation_text=f"이격도 {DISP_BUY_LINE} (매수 검토)",
         annotation_position="top right",
         annotation_font_color="green"
     )
 
-    # 이격도 110 수직 참조선 (과열 기준)
     fig.add_vline(
-        x=110,
+        x=DISP_HEAT_LINE,
         line_dash="dash",
         line_color="red",
-        annotation_text="이격도 110 (과열)",
+        annotation_text=f"이격도 {DISP_HEAT_LINE} (과열)",
         annotation_position="top left",
         annotation_font_color="red"
     )
 
-    # 복리수익률 15% 수평 참조선
     fig.add_hline(
         y=15,
         line_dash="dot",
@@ -357,7 +343,7 @@ if not df_plot.empty:
     )
 
     fig.update_layout(
-        xaxis=dict(title="이격도 (25일 이평 = 100)"),
+        xaxis=dict(title="30주 이격도 (30주 이평 = 100)"),
         yaxis=dict(title="복리수익률(%)"),
         legend_title="복리 15% 이상",
     )
